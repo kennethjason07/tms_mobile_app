@@ -1,8 +1,8 @@
 import React, { useState } from 'react';
-import { View, Text, Image, TouchableOpacity, StyleSheet, ScrollView, Linking, Modal } from 'react-native';
+import { View, Text, Image, TouchableOpacity, StyleSheet, ScrollView } from 'react-native';
 
 const NAV_ITEMS = [
-  { label: 'New Bill', desc: 'Create and manage new customer bills', screen: 'NewBill' },
+  { label: 'New Bill', desc: 'Create and manage new customer bills', screen: 'NewBillScreen' },
   { label: 'Customer Information', desc: 'View and manage customer details', screen: 'CustomerInfo' },
   { label: 'Orders Overview', desc: 'Track and manage all orders', screen: 'OrdersOverview' },
   { label: 'Shop Expenses', desc: 'Manage shop expenses and costs', screen: 'ShopExpense' },
@@ -13,7 +13,30 @@ const NAV_ITEMS = [
 ];
 
 export default function DashboardScreen({ navigation }) {
-  const [dropdownVisible, setDropdownVisible] = useState(false);
+  const handleNavigation = (screenName) => {
+    if (navigation?.navigate) {
+      if (screenName === 'NewBillScreen') {
+        navigation.navigate('NewBillScreen');
+      } else if (screenName === 'CustomerInfo') {
+        navigation.navigate('CustomerInfoScreen');
+      } else if (screenName === 'OrdersOverview') {
+        navigation.navigate('OrdersOverviewScreen');
+      } else if (screenName === 'ShopExpense') {
+        navigation.navigate('ShopExpenseScreen');
+      } else if (screenName === 'WorkerExpense') {
+        navigation.navigate('WorkerExpenseScreen');
+      } else if (screenName === 'WeeklyPay') {
+        navigation.navigate('WeeklyPayScreen');
+      } else if (screenName === 'WorkerDetail') {
+        navigation.navigate('WorkerDetailScreen');
+      } else if (screenName === 'DailyProfit') {
+        navigation.navigate('DailyProfitScreen');
+      } else {
+        // For other screens that haven't been created yet, show an alert
+        alert(`${screenName} screen is coming soon!`);
+      }
+    }
+  };
 
   return (
     <View style={styles.container}>
@@ -22,24 +45,6 @@ export default function DashboardScreen({ navigation }) {
         <View style={styles.headerLogo}>
           <Image source={require('./assets/logo.png')} style={styles.logo} />
           <Text style={styles.companyName}>Starset Consultancy Services</Text>
-        </View>
-        <View style={styles.profileContainer}>
-          <TouchableOpacity
-            style={styles.profileBtn}
-            onPress={() => setDropdownVisible(!dropdownVisible)}
-            activeOpacity={0.7}
-          >
-            {/* SVG replaced with View for simplicity */}
-            <View style={styles.profileIcon} />
-            <Text style={styles.profileText}>Select Role</Text>
-          </TouchableOpacity>
-          {dropdownVisible && (
-            <View style={styles.dropdownContent}>
-              <TouchableOpacity onPress={() => Linking.openURL('https://your-login-url.com')}>
-                <Text style={styles.dropdownItem}>Admin</Text>
-              </TouchableOpacity>
-            </View>
-          )}
         </View>
       </View>
 
@@ -51,7 +56,7 @@ export default function DashboardScreen({ navigation }) {
             <TouchableOpacity
               key={item.label}
               style={styles.navCard}
-              onPress={() => navigation?.navigate ? navigation.navigate(item.screen) : null}
+              onPress={() => handleNavigation(item.screen)}
               activeOpacity={0.8}
             >
               <Text style={styles.navCardTitle}>{item.label}</Text>
@@ -81,40 +86,6 @@ const styles = StyleSheet.create({
   headerLogo: { flexDirection: 'row', alignItems: 'center' },
   logo: { width: 60, height: 60, marginRight: 12, resizeMode: 'contain' },
   companyName: { fontSize: 18, fontWeight: 'bold', color: '#34495e' },
-  profileContainer: { position: 'relative' },
-  profileBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#ecf0f1',
-    borderRadius: 20,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-  },
-  profileIcon: {
-    width: 30,
-    height: 30,
-    borderRadius: 15,
-    backgroundColor: '#34495e',
-    marginRight: 8,
-  },
-  profileText: { fontSize: 16, color: '#34495e' },
-  dropdownContent: {
-    position: 'absolute',
-    top: 45,
-    right: 0,
-    backgroundColor: '#fff',
-    borderRadius: 8,
-    elevation: 4,
-    padding: 8,
-    zIndex: 10,
-    minWidth: 100,
-  },
-  dropdownItem: {
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    fontSize: 16,
-    color: '#34495e',
-  },
   main: { padding: 20 },
   dashboardTitle: { fontSize: 28, fontWeight: 'bold', marginBottom: 20, color: '#2c3e50' },
   navigationGrid: {
