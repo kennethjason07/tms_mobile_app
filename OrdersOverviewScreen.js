@@ -10,513 +10,322 @@ import {
   Image,
   FlatList,
   Modal,
+  ActivityIndicator,
 } from 'react-native';
+import { SupabaseAPI } from './supabase';
 
 export default function OrdersOverviewScreen({ navigation }) {
   const [orders, setOrders] = useState([]);
-  const [workers, setWorkers] = useState([]);
+  const [filteredOrders, setFilteredOrders] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [searchOrderNumber, setSearchOrderNumber] = useState('');
-  const [currentPage, setCurrentPage] = useState(1);
-  const [pageSize] = useState(10);
-  const [filters, setFilters] = useState({
-    deliveryStatus: '',
-    paymentStatus: '',
-    deliveryDate: '',
-  });
-  const [selectedWorkers, setSelectedWorkers] = useState({});
-  const [showWorkerModal, setShowWorkerModal] = useState(false);
-  const [currentOrderId, setCurrentOrderId] = useState(null);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [selectedOrder, setSelectedOrder] = useState(null);
+  const [modalVisible, setModalVisible] = useState(false);
 
   useEffect(() => {
-    fetchOrders();
+    loadOrders();
   }, []);
 
-  const fetchOrders = async () => {
-    setLoading(true);
+  useEffect(() => {
+    filterOrders();
+  }, [searchQuery, orders]);
+
+  const loadOrders = async () => {
     try {
-      const [ordersResponse, workersResponse] = await Promise.all([
-        fetch('http://127.0.0.1:5000/api/orders'),
-        fetch('http://127.0.0.1:5000/api/workers')
-      ]);
-
-      const ordersData = await ordersResponse.json();
-      const workersData = await workersResponse.json();
-
-      setWorkers(workersData);
-
-      // Flatten orders data
-      let allOrders = [];
-      for (const deliveryDate in ordersData) {
-        ordersData[deliveryDate].forEach(order => {
-          allOrders.push({ ...order, deliveryDate });
-        });
-      }
-
-      // Sort by bill number
-      allOrders.sort((a, b) => {
-        const billNumberA = a.billnumberinput2 ? a.billnumberinput2.toString() : '';
-        const billNumberB = b.billnumberinput2 ? b.billnumberinput2.toString() : '';
-        return billNumberB.localeCompare(billNumberA, undefined, { numeric: true });
-      });
-
-      setOrders(allOrders);
+      setLoading(true);
+      const data = await SupabaseAPI.getOrders();
+      setOrders(data);
+      setFilteredOrders(data);
     } catch (error) {
-      console.error('Error fetching orders:', error);
-      Alert.alert('Error', 'Failed to fetch orders');
+      Alert.alert('Error', `Failed to load orders: ${error.message}`);
     } finally {
       setLoading(false);
     }
   };
 
-  const searchOrder = async () => {
-    if (!searchOrderNumber.trim()) {
-      Alert.alert('Error', 'Please enter an order number.');
+  const filterOrders = () => {
+    if (!searchQuery.trim()) {
+      setFilteredOrders(orders);
+      return;
+    }
+
+    const filtered = orders.filter(order => 
+      order.billnumberinput2?.toString().includes(searchQuery) ||
+      order.garment_type?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      order.status?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      order.bills?.customer_name?.toLowerCase().includes(searchQuery.toLowerCase())
+    );
+    setFilteredOrders(filtered);
+  };
+
+  const handleSearch = async () => {
+    if (!searchQuery.trim()) {
+      loadOrders();
       return;
     }
 
     try {
-      const response = await fetch(`http://127.0.0.1:5000/api/orders/search?bill_number=${searchOrderNumber}`);
-      const data = await response.json();
-      
-      if (data.error) {
-        Alert.alert('Error', data.error);
-      } else {
-        setOrders(data);
-        setCurrentPage(1);
-      }
+      setLoading(true);
+      const data = await SupabaseAPI.searchOrders(searchQuery);
+      setFilteredOrders(data);
     } catch (error) {
-      Alert.alert('Error', 'Error fetching order data.');
-      console.error(error);
+      Alert.alert('Error', `Search failed: ${error.message}`);
+    } finally {
+      setLoading(false);
     }
   };
 
-  const updateOrderStatus = async (orderId, newStatus) => {
+  const handleUpdateStatus = async (orderId, newStatus) => {
     try {
-      const response = await fetch(`http://127.0.0.1:5000/api/orders/${orderId}/status`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: newStatus })
-      });
-
-      if (!response.ok) throw new Error('Network response was not ok');
-      
+      setLoading(true);
+      await SupabaseAPI.updateOrderStatus(orderId, newStatus);
+      loadOrders(); // Reload to get updated data
       Alert.alert('Success', 'Order status updated successfully');
-      fetchOrders(); // Refresh data
     } catch (error) {
-      console.error('Error updating order status:', error);
-      Alert.alert('Error', 'Error updating order status');
+      Alert.alert('Error', `Failed to update status: ${error.message}`);
+    } finally {
+      setLoading(false);
     }
   };
 
-  const updatePaymentStatus = async (orderId, newPaymentStatus) => {
+  const handleUpdatePaymentMode = async (orderId, newPaymentMode) => {
     try {
-      const response = await fetch(`http://127.0.0.1:5000/api/orders/${orderId}/payment-status`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ payment_status: newPaymentStatus })
-      });
-
-      if (!response.ok) throw new Error('Network response was not ok');
-      
-      Alert.alert('Success', 'Payment status updated successfully');
-      fetchOrders(); // Refresh data
-    } catch (error) {
-      console.error('Error updating payment status:', error);
-      Alert.alert('Error', 'Error updating payment status');
-    }
-  };
-
-  const updatePaymentMode = async (orderId, newPaymentMode) => {
-    try {
-      const response = await fetch(`http://127.0.0.1:5000/api/orders/${orderId}/payment-mode`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ payment_mode: newPaymentMode })
-      });
-
-      if (!response.ok) throw new Error('Network response was not ok');
-      
+      setLoading(true);
+      await SupabaseAPI.updatePaymentMode(orderId, newPaymentMode);
+      loadOrders(); // Reload to get updated data
       Alert.alert('Success', 'Payment mode updated successfully');
-      fetchOrders(); // Refresh data
     } catch (error) {
-      console.error('Error updating payment mode:', error);
-      Alert.alert('Error', 'Error updating payment mode');
+      Alert.alert('Error', `Failed to update payment mode: ${error.message}`);
+    } finally {
+      setLoading(false);
     }
   };
 
-  const assignWorkersToOrder = async (orderId) => {
-    const workerIds = selectedWorkers[orderId] || [];
-    if (workerIds.length === 0) {
-      Alert.alert('Error', 'Please select at least one worker.');
-      return;
-    }
-
-    try {
-      const response = await fetch(`http://127.0.0.1:5000/api/orders/${orderId}/assign-workers`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ worker_ids: workerIds })
-      });
-
-      const data = await response.json();
-      if (data.success) {
-        Alert.alert('Success', `Workers assigned successfully. Total Work Pay: ₹${data.work_pay.toFixed(2)}`);
-        setShowWorkerModal(false);
-        fetchOrders(); // Refresh data
-      } else {
-        Alert.alert('Error', `Failed to assign workers: ${data.error}`);
-      }
-    } catch (error) {
-      console.error('Error assigning workers:', error);
-      Alert.alert('Error', 'An error occurred while assigning workers.');
+  const getStatusColor = (status) => {
+    switch (status?.toLowerCase()) {
+      case 'completed':
+        return '#27ae60';
+      case 'in progress':
+        return '#f39c12';
+      case 'pending':
+        return '#e74c3c';
+      default:
+        return '#7f8c8d';
     }
   };
 
-  const toggleWorkerSelection = (orderId, workerId) => {
-    setSelectedWorkers(prev => {
-      const current = prev[orderId] || [];
-      const updated = current.includes(workerId)
-        ? current.filter(id => id !== workerId)
-        : [...current, workerId];
-      return { ...prev, [orderId]: updated };
-    });
+  const getPaymentStatusColor = (status) => {
+    switch (status?.toLowerCase()) {
+      case 'paid':
+        return '#27ae60';
+      case 'partial':
+        return '#f39c12';
+      case 'unpaid':
+        return '#e74c3c';
+      default:
+        return '#7f8c8d';
+    }
   };
 
-  const openWorkerModal = (orderId) => {
-    setCurrentOrderId(orderId);
-    setSelectedWorkers(prev => ({ ...prev, [orderId]: prev[orderId] || [] }));
-    setShowWorkerModal(true);
-  };
-
-  const formatDateTime = (dateTimeString) => {
-    if (!dateTimeString) return '';
-    const date = new Date(dateTimeString);
-    const year = date.getFullYear();
-    const month = String(date.getMonth() + 1).padStart(2, '0');
-    const day = String(date.getDate()).padStart(2, '0');
-    return `${year}-${month}-${day}`;
-  };
-
-  const filteredOrders = orders.filter(order => {
-    const matchesDeliveryStatus = !filters.deliveryStatus || 
-      order.status.toLowerCase() === filters.deliveryStatus.toLowerCase();
-    const matchesPaymentStatus = !filters.paymentStatus || 
-      order.payment_status.toLowerCase() === filters.paymentStatus.toLowerCase();
-    const matchesDeliveryDate = !filters.deliveryDate || 
-      formatDateTime(order.due_date) === filters.deliveryDate;
-    
-    return matchesDeliveryStatus && matchesPaymentStatus && matchesDeliveryDate;
-  });
-
-  const totalPages = Math.ceil(filteredOrders.length / pageSize);
-  const startIndex = (currentPage - 1) * pageSize;
-  const endIndex = startIndex + pageSize;
-  const currentOrders = filteredOrders.slice(startIndex, endIndex);
-
-  const renderOrderItem = ({ item: order }) => (
-    <View style={styles.orderCard}>
+  const renderOrder = ({ item }) => (
+    <TouchableOpacity
+      style={styles.orderCard}
+      onPress={() => {
+        setSelectedOrder(item);
+        setModalVisible(true);
+      }}
+    >
       <View style={styles.orderHeader}>
-        <Text style={styles.orderId}>Order ID: {order.id}</Text>
-        <Text style={styles.billNumber}>Bill: {order.billnumberinput2 || 'N/A'}</Text>
+        <Text style={styles.orderNumber}>
+          #{item.billnumberinput2 || item.id}
+        </Text>
+        <View style={[styles.statusBadge, { backgroundColor: getStatusColor(item.status) }]}>
+          <Text style={styles.statusText}>{item.status}</Text>
+        </View>
       </View>
+
+      <Text style={styles.customerName}>
+        {item.bills?.customer_name || 'Unknown Customer'}
+      </Text>
 
       <View style={styles.orderDetails}>
-        <View style={styles.orderRow}>
-          <Text style={styles.orderLabel}>Garment Type:</Text>
-          <Text style={styles.orderValue}>{order.garment_type}</Text>
-        </View>
-
-        <View style={styles.orderRow}>
-          <Text style={styles.orderLabel}>Delivery Status:</Text>
-          <View style={styles.dropdownContainer}>
-            <TouchableOpacity
-              style={styles.dropdownButton}
-              onPress={() => {
-                Alert.alert(
-                  'Update Delivery Status',
-                  'Select new status:',
-                  [
-                    { text: 'Pending', onPress: () => updateOrderStatus(order.id, 'pending') },
-                    { text: 'Completed', onPress: () => updateOrderStatus(order.id, 'completed') },
-                    { text: 'Cancelled', onPress: () => updateOrderStatus(order.id, 'cancelled') },
-                    { text: 'Cancel', style: 'cancel' }
-                  ]
-                );
-              }}
-            >
-              <Text style={styles.dropdownButtonText}>{order.status}</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-
-        <View style={styles.orderRow}>
-          <Text style={styles.orderLabel}>Delivery Date:</Text>
-          <Text style={styles.orderValue}>{formatDateTime(order.due_date)}</Text>
-        </View>
-
-        <View style={styles.orderRow}>
-          <Text style={styles.orderLabel}>Payment Mode:</Text>
-          <View style={styles.dropdownContainer}>
-            <TouchableOpacity
-              style={styles.dropdownButton}
-              onPress={() => {
-                Alert.alert(
-                  'Update Payment Mode',
-                  'Select payment mode:',
-                  [
-                    { text: 'UPI', onPress: () => updatePaymentMode(order.id, 'UPI') },
-                    { text: 'Cash', onPress: () => updatePaymentMode(order.id, 'Cash') },
-                    { text: 'Cancel', style: 'cancel' }
-                  ]
-                );
-              }}
-            >
-              <Text style={styles.dropdownButtonText}>{order.payment_mode}</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-
-        <View style={styles.orderRow}>
-          <Text style={styles.orderLabel}>Payment Status:</Text>
-          <View style={styles.dropdownContainer}>
-            <TouchableOpacity
-              style={styles.dropdownButton}
-              onPress={() => {
-                Alert.alert(
-                  'Update Payment Status',
-                  'Select payment status:',
-                  [
-                    { text: 'Pending', onPress: () => updatePaymentStatus(order.id, 'pending') },
-                    { text: 'Paid', onPress: () => updatePaymentStatus(order.id, 'paid') },
-                    { text: 'Cancelled', onPress: () => updatePaymentStatus(order.id, 'cancelled') },
-                    { text: 'Cancel', style: 'cancel' }
-                  ]
-                );
-              }}
-            >
-              <Text style={styles.dropdownButtonText}>{order.payment_status}</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-
-        <View style={styles.orderRow}>
-          <Text style={styles.orderLabel}>Total Amount:</Text>
-          <Text style={[styles.orderValue, styles.totalAmount]}>₹{order.total_amt}</Text>
-        </View>
-
-        <View style={styles.orderRow}>
-          <Text style={styles.orderLabel}>Advance Amount:</Text>
-          <Text style={styles.orderValue}>₹{order.payment_amount}</Text>
-        </View>
-
-        <View style={styles.orderRow}>
-          <Text style={styles.orderLabel}>Pending Amount:</Text>
-          <Text style={styles.orderValue}>₹{order.total_amt - order.payment_amount}</Text>
-        </View>
-
-        <View style={styles.orderRow}>
-          <Text style={styles.orderLabel}>Customer Mobile:</Text>
-          <Text style={styles.orderValue}>{order.customer_mobile || 'N/A'}</Text>
-        </View>
-
-        <View style={styles.orderRow}>
-          <Text style={styles.orderLabel}>Worker Names:</Text>
-          <Text style={styles.orderValue}>
-            {order.workers?.map(worker => worker.name).join(', ') || 'Not Assigned'}
-          </Text>
-        </View>
-
-        <View style={styles.orderRow}>
-          <Text style={styles.orderLabel}>Worker Pay:</Text>
-          <Text style={styles.orderValue}>₹{order.Work_pay || 'N/A'}</Text>
-        </View>
-
-        <TouchableOpacity
-          style={styles.assignWorkerButton}
-          onPress={() => openWorkerModal(order.id)}
-        >
-          <Text style={styles.assignWorkerButtonText}>Assign Workers</Text>
-        </TouchableOpacity>
+        <Text style={styles.garmentType}>{item.garment_type}</Text>
+        <Text style={styles.amount}>₹{item.total_amt}</Text>
       </View>
-    </View>
+
+      <View style={styles.orderFooter}>
+        <View style={[styles.paymentBadge, { backgroundColor: getPaymentStatusColor(item.payment_status) }]}>
+          <Text style={styles.paymentText}>{item.payment_status}</Text>
+        </View>
+        <Text style={styles.date}>
+          Due: {new Date(item.due_date).toLocaleDateString()}
+        </Text>
+      </View>
+
+      {item.order_worker_association && item.order_worker_association.length > 0 && (
+        <View style={styles.workersContainer}>
+          <Text style={styles.workersLabel}>Workers:</Text>
+          {item.order_worker_association.map((assignment, index) => (
+            <Text key={index} style={styles.workerName}>
+              {assignment.workers?.name}
+            </Text>
+          ))}
+        </View>
+      )}
+    </TouchableOpacity>
   );
+
+  if (loading && orders.length === 0) {
+    return (
+      <View style={styles.loadingContainer}>
+        <ActivityIndicator size="large" color="#2980b9" />
+        <Text style={styles.loadingText}>Loading orders...</Text>
+      </View>
+    );
+  }
 
   return (
     <View style={styles.container}>
-      {/* Header */}
       <View style={styles.header}>
-        <TouchableOpacity
-          style={styles.backButton}
-          onPress={() => navigation.goBack()}
-        >
-          <Text style={styles.backButtonText}>←</Text>
+        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
+          <Text style={styles.backButtonText}>← Back</Text>
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Orders Overview</Text>
-        <View style={styles.placeholder} />
+        <View style={styles.headerRight} />
       </View>
 
-      <ScrollView style={styles.content}>
-        <Text style={styles.screenTitle}>Orders Overview</Text>
+      <View style={styles.searchContainer}>
+        <TextInput
+          style={styles.searchInput}
+          placeholder="Search by bill number, customer, or status..."
+          value={searchQuery}
+          onChangeText={setSearchQuery}
+          onSubmitEditing={handleSearch}
+        />
+        <TouchableOpacity style={styles.searchButton} onPress={handleSearch}>
+          <Text style={styles.searchButtonText}>Search</Text>
+        </TouchableOpacity>
+      </View>
 
-        {/* Search Section */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Search Order</Text>
-          <View style={styles.searchContainer}>
-            <TextInput
-              style={styles.searchInput}
-              placeholder="Enter Order Number"
-              value={searchOrderNumber}
-              onChangeText={setSearchOrderNumber}
-              keyboardType="numeric"
-            />
-            <TouchableOpacity style={styles.searchButton} onPress={searchOrder}>
-              <Text style={styles.searchButtonText}>Search</Text>
-            </TouchableOpacity>
-          </View>
+      <View style={styles.statsContainer}>
+        <View style={styles.statItem}>
+          <Text style={styles.statNumber}>{filteredOrders.length}</Text>
+          <Text style={styles.statLabel}>Total Orders</Text>
         </View>
-
-        {/* Filters Section */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Filters</Text>
-          <View style={styles.filtersContainer}>
-            <View style={styles.filterRow}>
-              <Text style={styles.filterLabel}>Delivery Status:</Text>
-              <TouchableOpacity
-                style={styles.filterButton}
-                onPress={() => {
-                  Alert.alert(
-                    'Filter by Delivery Status',
-                    'Select status:',
-                    [
-                      { text: 'All', onPress: () => setFilters(prev => ({ ...prev, deliveryStatus: '' })) },
-                      { text: 'Pending', onPress: () => setFilters(prev => ({ ...prev, deliveryStatus: 'pending' })) },
-                      { text: 'Completed', onPress: () => setFilters(prev => ({ ...prev, deliveryStatus: 'completed' })) },
-                      { text: 'Cancelled', onPress: () => setFilters(prev => ({ ...prev, deliveryStatus: 'cancelled' })) },
-                      { text: 'Cancel', style: 'cancel' }
-                    ]
-                  );
-                }}
-              >
-                <Text style={styles.filterButtonText}>
-                  {filters.deliveryStatus || 'All'}
-                </Text>
-              </TouchableOpacity>
-            </View>
-
-            <View style={styles.filterRow}>
-              <Text style={styles.filterLabel}>Payment Status:</Text>
-              <TouchableOpacity
-                style={styles.filterButton}
-                onPress={() => {
-                  Alert.alert(
-                    'Filter by Payment Status',
-                    'Select status:',
-                    [
-                      { text: 'All', onPress: () => setFilters(prev => ({ ...prev, paymentStatus: '' })) },
-                      { text: 'Pending', onPress: () => setFilters(prev => ({ ...prev, paymentStatus: 'pending' })) },
-                      { text: 'Paid', onPress: () => setFilters(prev => ({ ...prev, paymentStatus: 'paid' })) },
-                      { text: 'Cancelled', onPress: () => setFilters(prev => ({ ...prev, paymentStatus: 'cancelled' })) },
-                      { text: 'Cancel', style: 'cancel' }
-                    ]
-                  );
-                }}
-              >
-                <Text style={styles.filterButtonText}>
-                  {filters.paymentStatus || 'All'}
-                </Text>
-              </TouchableOpacity>
-            </View>
-          </View>
+        <View style={styles.statItem}>
+          <Text style={styles.statNumber}>
+            {filteredOrders.filter(o => o.status?.toLowerCase() === 'completed').length}
+          </Text>
+          <Text style={styles.statLabel}>Completed</Text>
         </View>
-
-        {/* Orders List */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Orders ({filteredOrders.length})</Text>
-          {loading ? (
-            <Text style={styles.loadingText}>Loading orders...</Text>
-          ) : currentOrders.length > 0 ? (
-            <FlatList
-              data={currentOrders}
-              renderItem={renderOrderItem}
-              keyExtractor={(item) => item.id.toString()}
-              scrollEnabled={false}
-              showsVerticalScrollIndicator={false}
-            />
-          ) : (
-            <Text style={styles.noOrdersText}>No orders found.</Text>
-          )}
+        <View style={styles.statItem}>
+          <Text style={styles.statNumber}>
+            {filteredOrders.filter(o => o.payment_status?.toLowerCase() === 'paid').length}
+          </Text>
+          <Text style={styles.statLabel}>Paid</Text>
         </View>
+      </View>
 
-        {/* Pagination */}
-        {totalPages > 1 && (
-          <View style={styles.paginationContainer}>
-            <TouchableOpacity
-              style={[styles.paginationButton, currentPage === 1 && styles.paginationButtonDisabled]}
-              onPress={() => setCurrentPage(prev => Math.max(1, prev - 1))}
-              disabled={currentPage === 1}
-            >
-              <Text style={styles.paginationButtonText}>Previous</Text>
-            </TouchableOpacity>
-            
-            <Text style={styles.paginationText}>
-              Page {currentPage} of {totalPages}
-            </Text>
-            
-            <TouchableOpacity
-              style={[styles.paginationButton, currentPage === totalPages && styles.paginationButtonDisabled]}
-              onPress={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
-              disabled={currentPage === totalPages}
-            >
-              <Text style={styles.paginationButtonText}>Next</Text>
-            </TouchableOpacity>
-          </View>
-        )}
-      </ScrollView>
+      <FlatList
+        data={filteredOrders}
+        renderItem={renderOrder}
+        keyExtractor={(item) => item.id.toString()}
+        contentContainerStyle={styles.listContainer}
+        refreshing={loading}
+        onRefresh={loadOrders}
+        showsVerticalScrollIndicator={false}
+      />
 
-      {/* Worker Assignment Modal */}
+      {/* Order Detail Modal */}
       <Modal
-        visible={showWorkerModal}
         animationType="slide"
         transparent={true}
-        onRequestClose={() => setShowWorkerModal(false)}
+        visible={modalVisible}
+        onRequestClose={() => setModalVisible(false)}
       >
-        <View style={styles.modalContainer}>
+        <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
-            <Text style={styles.modalTitle}>Assign Workers</Text>
-            
-            <ScrollView style={styles.workersList}>
-              {workers.map(worker => (
-                <TouchableOpacity
-                  key={worker.id}
-                  style={[
-                    styles.workerItem,
-                    selectedWorkers[currentOrderId]?.includes(worker.id) && styles.workerItemSelected
-                  ]}
-                  onPress={() => toggleWorkerSelection(currentOrderId, worker.id)}
-                >
-                  <Text style={styles.workerName}>{worker.name}</Text>
-                  {selectedWorkers[currentOrderId]?.includes(worker.id) && (
-                    <Text style={styles.selectedIndicator}>✓</Text>
-                  )}
-                </TouchableOpacity>
-              ))}
-            </ScrollView>
-
-            <View style={styles.modalButtons}>
-              <TouchableOpacity
-                style={styles.modalButton}
-                onPress={() => setShowWorkerModal(false)}
-              >
-                <Text style={styles.modalButtonText}>Cancel</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={styles.modalButton}
-                onPress={() => assignWorkersToOrder(currentOrderId)}
-              >
-                <Text style={styles.modalButtonText}>Assign</Text>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Order Details</Text>
+              <TouchableOpacity onPress={() => setModalVisible(false)}>
+                <Text style={styles.closeButton}>✕</Text>
               </TouchableOpacity>
             </View>
+
+            {selectedOrder && (
+              <ScrollView style={styles.modalBody}>
+                <View style={styles.detailSection}>
+                  <Text style={styles.sectionTitle}>Order Information</Text>
+                  <Text style={styles.detailText}>Order #: {selectedOrder.billnumberinput2 || selectedOrder.id}</Text>
+                  <Text style={styles.detailText}>Garment: {selectedOrder.garment_type}</Text>
+                  <Text style={styles.detailText}>Status: {selectedOrder.status}</Text>
+                  <Text style={styles.detailText}>Amount: ₹{selectedOrder.total_amt}</Text>
+                  <Text style={styles.detailText}>Payment: {selectedOrder.payment_status}</Text>
+                  <Text style={styles.detailText}>Mode: {selectedOrder.payment_mode}</Text>
+                  <Text style={styles.detailText}>Order Date: {new Date(selectedOrder.order_date).toLocaleDateString()}</Text>
+                  <Text style={styles.detailText}>Due Date: {new Date(selectedOrder.due_date).toLocaleDateString()}</Text>
+                </View>
+
+                <View style={styles.detailSection}>
+                  <Text style={styles.sectionTitle}>Customer Information</Text>
+                  <Text style={styles.detailText}>Name: {selectedOrder.bills?.customer_name}</Text>
+                  <Text style={styles.detailText}>Phone: {selectedOrder.bills?.mobile_number}</Text>
+                </View>
+
+                {selectedOrder.order_worker_association && selectedOrder.order_worker_association.length > 0 && (
+                  <View style={styles.detailSection}>
+                    <Text style={styles.sectionTitle}>Assigned Workers</Text>
+                    {selectedOrder.order_worker_association.map((assignment, index) => (
+                      <Text key={index} style={styles.detailText}>
+                        {assignment.workers?.name} - ₹{assignment.workers?.Rate}
+                      </Text>
+                    ))}
+                  </View>
+                )}
+
+                <View style={styles.detailSection}>
+                  <Text style={styles.sectionTitle}>Quick Actions</Text>
+                  
+                  <TouchableOpacity
+                    style={styles.actionButton}
+                    onPress={() => {
+                      setModalVisible(false);
+                      Alert.alert(
+                        'Update Status',
+                        'Select new status:',
+                        [
+                          { text: 'Pending', onPress: () => handleUpdateStatus(selectedOrder.id, 'Pending') },
+                          { text: 'In Progress', onPress: () => handleUpdateStatus(selectedOrder.id, 'In Progress') },
+                          { text: 'Completed', onPress: () => handleUpdateStatus(selectedOrder.id, 'Completed') },
+                          { text: 'Cancel', style: 'cancel' }
+                        ]
+                      );
+                    }}
+                  >
+                    <Text style={styles.actionButtonText}>Update Status</Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={styles.actionButton}
+                    onPress={() => {
+                      setModalVisible(false);
+                      Alert.alert(
+                        'Update Payment Mode',
+                        'Select payment mode:',
+                        [
+                          { text: 'Cash', onPress: () => handleUpdatePaymentMode(selectedOrder.id, 'Cash') },
+                          { text: 'Card', onPress: () => handleUpdatePaymentMode(selectedOrder.id, 'Card') },
+                          { text: 'UPI', onPress: () => handleUpdatePaymentMode(selectedOrder.id, 'UPI') },
+                          { text: 'Cancel', style: 'cancel' }
+                        ]
+                      );
+                    }}
+                  >
+                    <Text style={styles.actionButtonText}>Update Payment Mode</Text>
+                  </TouchableOpacity>
+                </View>
+              </ScrollView>
+            )}
           </View>
         </View>
       </Modal>
@@ -529,9 +338,21 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#f8f9fa',
   },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#f8f9fa',
+  },
+  loadingText: {
+    marginTop: 10,
+    fontSize: 16,
+    color: '#7f8c8d',
+  },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'space-between',
     padding: 16,
     backgroundColor: '#fff',
     elevation: 4,
@@ -542,274 +363,213 @@ const styles = StyleSheet.create({
   },
   backButton: {
     padding: 8,
-    marginRight: 12,
   },
   backButtonText: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: '#34495e',
+    fontSize: 16,
+    color: '#2980b9',
   },
   headerTitle: {
-    fontSize: 18,
+    fontSize: 20,
     fontWeight: 'bold',
-    color: '#34495e',
-  },
-  placeholder: {
-    flex: 1,
-  },
-  content: {
-    flex: 1,
-    padding: 16,
-  },
-  screenTitle: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    marginBottom: 20,
     color: '#2c3e50',
   },
-  section: {
-    backgroundColor: '#fff',
-    borderRadius: 8,
-    padding: 16,
-    marginBottom: 16,
-    elevation: 2,
-    shadowColor: '#000',
-    shadowOpacity: 0.08,
-    shadowRadius: 4,
-    shadowOffset: { width: 0, height: 2 },
-  },
-  sectionTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    marginBottom: 12,
-    color: '#2980b9',
+  headerRight: {
+    width: 60,
   },
   searchContainer: {
     flexDirection: 'row',
-    alignItems: 'center',
+    padding: 16,
+    backgroundColor: '#fff',
+    borderBottomWidth: 1,
+    borderBottomColor: '#e9ecef',
   },
   searchInput: {
     flex: 1,
     borderWidth: 1,
     borderColor: '#ddd',
-    borderRadius: 4,
+    borderRadius: 8,
     padding: 12,
     marginRight: 8,
     fontSize: 16,
   },
   searchButton: {
     backgroundColor: '#2980b9',
-    paddingHorizontal: 20,
+    paddingHorizontal: 16,
     paddingVertical: 12,
-    borderRadius: 4,
+    borderRadius: 8,
+    justifyContent: 'center',
   },
   searchButtonText: {
     color: '#fff',
-    fontWeight: 'bold',
     fontSize: 16,
+    fontWeight: 'bold',
   },
-  filtersContainer: {
-    gap: 12,
-  },
-  filterRow: {
+  statsContainer: {
     flexDirection: 'row',
+    padding: 16,
+    backgroundColor: '#fff',
+    marginBottom: 8,
+  },
+  statItem: {
+    flex: 1,
     alignItems: 'center',
-    justifyContent: 'space-between',
   },
-  filterLabel: {
-    fontSize: 16,
+  statNumber: {
+    fontSize: 24,
     fontWeight: 'bold',
-    color: '#34495e',
+    color: '#2980b9',
   },
-  filterButton: {
-    backgroundColor: '#ecf0f1',
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 4,
-    minWidth: 100,
+  statLabel: {
+    fontSize: 12,
+    color: '#7f8c8d',
+    marginTop: 4,
   },
-  filterButtonText: {
-    fontSize: 14,
-    color: '#34495e',
-    textAlign: 'center',
+  listContainer: {
+    padding: 16,
   },
   orderCard: {
-    backgroundColor: '#f8f9fa',
-    borderRadius: 8,
+    backgroundColor: '#fff',
+    borderRadius: 12,
     padding: 16,
     marginBottom: 12,
-    borderLeftWidth: 4,
-    borderLeftColor: '#2980b9',
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOpacity: 0.08,
+    shadowRadius: 4,
+    shadowOffset: { width: 0, height: 2 },
   },
   orderHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    marginBottom: 12,
-    paddingBottom: 8,
-    borderBottomWidth: 1,
-    borderBottomColor: '#ddd',
-  },
-  orderId: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    color: '#2980b9',
-  },
-  billNumber: {
-    fontSize: 14,
-    color: '#7f8c8d',
-    fontWeight: 'bold',
-  },
-  orderDetails: {
-    gap: 8,
-  },
-  orderRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
+    marginBottom: 8,
   },
-  orderLabel: {
-    fontSize: 14,
-    color: '#7f8c8d',
-    fontWeight: '500',
-    flex: 1,
-  },
-  orderValue: {
-    fontSize: 14,
+  orderNumber: {
+    fontSize: 18,
+    fontWeight: 'bold',
     color: '#2c3e50',
-    fontWeight: 'bold',
-    flex: 1,
-    textAlign: 'right',
   },
-  totalAmount: {
-    color: '#27ae60',
-    fontSize: 16,
+  statusBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 12,
   },
-  dropdownContainer: {
-    flex: 1,
-  },
-  dropdownButton: {
-    backgroundColor: '#2980b9',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 4,
-    alignItems: 'center',
-  },
-  dropdownButtonText: {
+  statusText: {
     color: '#fff',
     fontSize: 12,
     fontWeight: 'bold',
   },
-  assignWorkerButton: {
-    backgroundColor: '#e74c3c',
-    padding: 8,
-    borderRadius: 4,
-    alignItems: 'center',
-    marginTop: 8,
-  },
-  assignWorkerButtonText: {
-    color: '#fff',
-    fontSize: 14,
-    fontWeight: 'bold',
-  },
-  loadingText: {
+  customerName: {
     fontSize: 16,
-    color: '#7f8c8d',
-    textAlign: 'center',
-    fontStyle: 'italic',
+    color: '#34495e',
+    marginBottom: 8,
   },
-  noOrdersText: {
-    fontSize: 16,
-    color: '#7f8c8d',
-    textAlign: 'center',
-    fontStyle: 'italic',
-  },
-  paginationContainer: {
+  orderDetails: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingVertical: 16,
+    marginBottom: 8,
   },
-  paginationButton: {
-    backgroundColor: '#2980b9',
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 4,
-  },
-  paginationButtonDisabled: {
-    backgroundColor: '#95a5a6',
-  },
-  paginationButtonText: {
-    color: '#fff',
+  garmentType: {
     fontSize: 14,
-    fontWeight: 'bold',
+    color: '#7f8c8d',
   },
-  paginationText: {
+  amount: {
     fontSize: 16,
-    color: '#34495e',
+    fontWeight: 'bold',
+    color: '#27ae60',
+  },
+  orderFooter: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  paymentBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 12,
+  },
+  paymentText: {
+    color: '#fff',
+    fontSize: 12,
     fontWeight: 'bold',
   },
-  modalContainer: {
+  date: {
+    fontSize: 12,
+    color: '#7f8c8d',
+  },
+  workersContainer: {
+    marginTop: 8,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: '#e9ecef',
+  },
+  workersLabel: {
+    fontSize: 12,
+    color: '#7f8c8d',
+    marginBottom: 4,
+  },
+  workerName: {
+    fontSize: 12,
+    color: '#2980b9',
+    marginLeft: 8,
+  },
+  modalOverlay: {
     flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
   },
   modalContent: {
     backgroundColor: '#fff',
-    borderRadius: 10,
-    padding: 20,
+    borderRadius: 12,
     width: '90%',
     maxHeight: '80%',
   },
-  modalTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    marginBottom: 16,
-    color: '#2c3e50',
-    textAlign: 'center',
-  },
-  workersList: {
-    maxHeight: 300,
-  },
-  workerItem: {
+  modalHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    padding: 12,
-    borderWidth: 1,
-    borderColor: '#ddd',
-    borderRadius: 4,
+    padding: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e9ecef',
+  },
+  modalTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#2c3e50',
+  },
+  closeButton: {
+    fontSize: 24,
+    color: '#7f8c8d',
+  },
+  modalBody: {
+    padding: 20,
+  },
+  detailSection: {
+    marginBottom: 20,
+  },
+  sectionTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#2c3e50',
+    marginBottom: 12,
+  },
+  detailText: {
+    fontSize: 16,
+    color: '#34495e',
     marginBottom: 8,
   },
-  workerItemSelected: {
-    backgroundColor: '#e8f5e8',
-    borderColor: '#27ae60',
-  },
-  workerName: {
-    fontSize: 16,
-    color: '#2c3e50',
-  },
-  selectedIndicator: {
-    fontSize: 18,
-    color: '#27ae60',
-    fontWeight: 'bold',
-  },
-  modalButtons: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginTop: 16,
-  },
-  modalButton: {
-    flex: 1,
+  actionButton: {
     backgroundColor: '#2980b9',
     padding: 12,
-    borderRadius: 4,
-    marginHorizontal: 4,
-    alignItems: 'center',
+    borderRadius: 8,
+    marginBottom: 8,
   },
-  modalButtonText: {
+  actionButtonText: {
     color: '#fff',
     fontSize: 16,
     fontWeight: 'bold',
+    textAlign: 'center',
   },
 }); 

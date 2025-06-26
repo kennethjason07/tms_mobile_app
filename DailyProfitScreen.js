@@ -1,304 +1,545 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
   StyleSheet,
-  ScrollView,
+  FlatList,
   TouchableOpacity,
   Alert,
   ActivityIndicator,
+  TextInput,
   Modal,
+  ScrollView,
 } from 'react-native';
+import { SupabaseAPI, supabase } from './supabase';
 
 export default function DailyProfitScreen({ navigation }) {
-  const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
-  const [dailyProfit, setDailyProfit] = useState(null);
-  const [monthlyProfit, setMonthlyProfit] = useState(null);
-  const [loading, setLoading] = useState(false);
-  const [modalVisible, setModalVisible] = useState(false);
-  const [modalType, setModalType] = useState('daily');
+  const [profitData, setProfitData] = useState([]);
+  const [filteredData, setFilteredData] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [selectedDate, setSelectedDate] = useState(null);
+  const [detailModalVisible, setDetailModalVisible] = useState(false);
+  const [summaryStats, setSummaryStats] = useState({});
+  const [dateFilter, setDateFilter] = useState('all'); // all, today, week, month
 
-  const fetchDailyProfit = async (date) => {
+  useEffect(() => {
+    loadData();
+  }, [dateFilter]);
+
+  useEffect(() => {
+    filterData();
+  }, [searchQuery, profitData]);
+
+  const loadData = async () => {
     try {
       setLoading(true);
-      const response = await fetch(`http://127.0.0.1:5000/api/calculate-profit?date=${date}`);
-      if (response.ok) {
-        const data = await response.json();
-        setDailyProfit(data);
-        setModalType('daily');
-        setModalVisible(true);
-      } else {
-        // Mock data for testing
-        const mockData = {
-          total_revenue: 15000,
-          daily_expenses: 3000,
-          worker_expenses: 5000,
-          net_profit: 7000,
-        };
-        setDailyProfit(mockData);
-        setModalType('daily');
-        setModalVisible(true);
-      }
+      const data = await getProfitData();
+      setProfitData(data);
+      setFilteredData(data);
+      
+      // Calculate summary statistics
+      const summary = calculateSummaryStats(data);
+      setSummaryStats(summary);
     } catch (error) {
-      console.error('Error fetching daily profit:', error);
-      // Mock data for testing
-      const mockData = {
-        total_revenue: 15000,
-        daily_expenses: 3000,
-        worker_expenses: 5000,
-        net_profit: 7000,
-      };
-      setDailyProfit(mockData);
-      setModalType('daily');
-      setModalVisible(true);
+      console.error('Daily profit loading error:', error);
+      Alert.alert('Error', `Failed to load profit data: ${error.message}`);
     } finally {
       setLoading(false);
     }
   };
 
-  const fetchMonthlyProfit = async () => {
+  const getProfitData = async () => {
     try {
-      setLoading(true);
-      const response = await fetch('http://127.0.0.1:5000/api/calculate-profit');
-      if (response.ok) {
-        const data = await response.json();
-        setMonthlyProfit(data);
-        setModalType('monthly');
-        setModalVisible(true);
-      } else {
-        // Mock data for testing
-        const mockData = {
-          profit_by_month: {
-            'January 2024': 45000,
-            'February 2024': 52000,
-            'March 2024': 48000,
-            'April 2024': 55000,
-            'May 2024': 61000,
-            'June 2024': 58000,
-          },
-        };
-        setMonthlyProfit(mockData);
-        setModalType('monthly');
-        setModalVisible(true);
+      // Get all orders
+      const { data: orders } = await supabase
+        .from('orders')
+        .select('*')
+        .order('order_date', { ascending: false });
+
+      // Get all shop expenses
+      const { data: shopExpenses } = await supabase
+        .from('Shop_Expense')
+        .select('*')
+        .order('date', { ascending: false });
+
+      // Get all worker expenses
+      const { data: workerExpenses } = await supabase
+        .from('Worker_Expense')
+        .select('*')
+        .order('date', { ascending: false });
+
+      // Get all bills for revenue calculation
+      const { data: bills } = await supabase
+        .from('bills')
+        .select('*')
+        .order('bill_date', { ascending: false });
+
+      // Process data by date
+      const profitByDate = {};
+      
+      // Process orders and calculate work pay
+      orders?.forEach(order => {
+        const date = order.order_date;
+        if (!profitByDate[date]) {
+          profitByDate[date] = {
+            date,
+            revenue: 0,
+            workPay: 0,
+            shopExpenses: 0,
+            workerExpenses: 0,
+            netProfit: 0,
+            orderCount: 0,
+            orders: [],
+            expenses: []
+          };
+        }
+        profitByDate[date].workPay += order.Work_pay || 0;
+        profitByDate[date].orderCount += 1;
+        profitByDate[date].orders.push(order);
+      });
+
+      // Process shop expenses
+      shopExpenses?.forEach(expense => {
+        const date = expense.date;
+        if (!profitByDate[date]) {
+          profitByDate[date] = {
+            date,
+            revenue: 0,
+            workPay: 0,
+            shopExpenses: 0,
+            workerExpenses: 0,
+            netProfit: 0,
+            orderCount: 0,
+            orders: [],
+            expenses: []
+          };
+        }
+        profitByDate[date].shopExpenses += expense.Amt_Paid || 0;
+        profitByDate[date].expenses.push({ ...expense, type: 'shop' });
+      });
+
+      // Process worker expenses
+      workerExpenses?.forEach(expense => {
+        const date = expense.date;
+        if (!profitByDate[date]) {
+          profitByDate[date] = {
+            date,
+            revenue: 0,
+            workPay: 0,
+            shopExpenses: 0,
+            workerExpenses: 0,
+            netProfit: 0,
+            orderCount: 0,
+            orders: [],
+            expenses: []
+          };
+        }
+        profitByDate[date].workerExpenses += expense.Amt_Paid || 0;
+        profitByDate[date].expenses.push({ ...expense, type: 'worker' });
+      });
+
+      // Process bills for revenue
+      bills?.forEach(bill => {
+        const date = bill.bill_date;
+        if (!profitByDate[date]) {
+          profitByDate[date] = {
+            date,
+            revenue: 0,
+            workPay: 0,
+            shopExpenses: 0,
+            workerExpenses: 0,
+            netProfit: 0,
+            orderCount: 0,
+            orders: [],
+            expenses: []
+          };
+        }
+        profitByDate[date].revenue += bill.total_amount || 0;
+      });
+
+      // Calculate net profit for each date
+      Object.values(profitByDate).forEach(dayData => {
+        dayData.netProfit = dayData.revenue - dayData.workPay - dayData.shopExpenses - dayData.workerExpenses;
+      });
+
+      // Convert to array and sort by date
+      let result = Object.values(profitByDate).sort((a, b) => new Date(b.date) - new Date(a.date));
+
+      // Apply date filter
+      if (dateFilter !== 'all') {
+        const now = new Date();
+        const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        
+        switch (dateFilter) {
+          case 'today':
+            result = result.filter(item => {
+              const itemDate = new Date(item.date);
+              return itemDate.getTime() === today.getTime();
+            });
+            break;
+          case 'week':
+            const weekAgo = new Date(today.getTime() - 7 * 24 * 60 * 60 * 1000);
+            result = result.filter(item => {
+              const itemDate = new Date(item.date);
+              return itemDate >= weekAgo;
+            });
+            break;
+          case 'month':
+            const monthAgo = new Date(today.getTime() - 30 * 24 * 60 * 60 * 1000);
+            result = result.filter(item => {
+              const itemDate = new Date(item.date);
+              return itemDate >= monthAgo;
+            });
+            break;
+        }
       }
+
+      return result;
     } catch (error) {
-      console.error('Error fetching monthly profit:', error);
-      // Mock data for testing
-      const mockData = {
-        profit_by_month: {
-          'January 2024': 45000,
-          'February 2024': 52000,
-          'March 2024': 48000,
-          'April 2024': 55000,
-          'May 2024': 61000,
-          'June 2024': 58000,
-        },
-      };
-      setMonthlyProfit(mockData);
-      setModalType('monthly');
-      setModalVisible(true);
-    } finally {
-      setLoading(false);
+      console.error('Error getting profit data:', error);
+      return [];
     }
   };
 
-  const handleDailyProfit = () => {
-    fetchDailyProfit(selectedDate);
+  const calculateSummaryStats = (data) => {
+    if (!data || data.length === 0) {
+      return {
+        totalRevenue: 0,
+        totalWorkPay: 0,
+        totalShopExpenses: 0,
+        totalWorkerExpenses: 0,
+        totalNetProfit: 0,
+        totalOrders: 0,
+        averageDailyProfit: 0,
+        profitMargin: 0,
+        bestDay: null,
+        worstDay: null
+      };
+    }
+
+    const totalRevenue = data.reduce((sum, day) => sum + day.revenue, 0);
+    const totalWorkPay = data.reduce((sum, day) => sum + day.workPay, 0);
+    const totalShopExpenses = data.reduce((sum, day) => sum + day.shopExpenses, 0);
+    const totalWorkerExpenses = data.reduce((sum, day) => sum + day.workerExpenses, 0);
+    const totalNetProfit = data.reduce((sum, day) => sum + day.netProfit, 0);
+    const totalOrders = data.reduce((sum, day) => sum + day.orderCount, 0);
+    const averageDailyProfit = totalNetProfit / data.length;
+    const profitMargin = totalRevenue > 0 ? (totalNetProfit / totalRevenue) * 100 : 0;
+
+    // Find best and worst days
+    const bestDay = data.reduce((best, current) => 
+      current.netProfit > best.netProfit ? current : best, data[0]);
+    const worstDay = data.reduce((worst, current) => 
+      current.netProfit < worst.netProfit ? current : worst, data[0]);
+
+    return {
+      totalRevenue,
+      totalWorkPay,
+      totalShopExpenses,
+      totalWorkerExpenses,
+      totalNetProfit,
+      totalOrders,
+      averageDailyProfit,
+      profitMargin,
+      bestDay,
+      worstDay
+    };
   };
 
-  const handleMonthlyProfit = () => {
-    fetchMonthlyProfit();
+  const filterData = () => {
+    if (!searchQuery.trim()) {
+      setFilteredData(profitData);
+      return;
+    }
+
+    const filtered = profitData.filter(day => {
+      return (
+        day.date.includes(searchQuery) ||
+        day.orderCount.toString().includes(searchQuery) ||
+        day.revenue.toString().includes(searchQuery) ||
+        day.netProfit.toString().includes(searchQuery)
+      );
+    });
+    setFilteredData(filtered);
+  };
+
+  const showDateDetail = (dayData) => {
+    setSelectedDate(dayData);
+    setDetailModalVisible(true);
   };
 
   const formatDate = (dateString) => {
     const date = new Date(dateString);
-    return date.toLocaleDateString();
+    return date.toLocaleDateString('en-US', {
+      weekday: 'short',
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric'
+    });
   };
 
-  const renderDailyProfitModal = () => (
-    <View style={styles.modalContent}>
-      <Text style={styles.modalTitle}>
-        Daily Business Summary ({formatDate(selectedDate)})
-      </Text>
-      
-      <View style={styles.profitTable}>
-        <View style={styles.tableHeader}>
-          <Text style={styles.headerCell}>Category</Text>
-          <Text style={styles.headerCell}>Amount (₹)</Text>
-        </View>
-        
-        <View style={[styles.tableRow, styles.revenueRow]}>
-          <Text style={styles.cellLabel}>Total Revenue</Text>
-          <Text style={styles.cellValue}>₹{dailyProfit?.total_revenue?.toFixed(2)}</Text>
-        </View>
-        
-        <View style={[styles.tableRow, styles.expenseRow]}>
-          <Text style={styles.cellLabel}>Daily Expenses</Text>
-          <Text style={styles.cellValue}>₹{dailyProfit?.daily_expenses?.toFixed(2)}</Text>
-        </View>
-        
-        <View style={[styles.tableRow, styles.expenseRow]}>
-          <Text style={styles.cellLabel}>Worker Expenses</Text>
-          <Text style={styles.cellValue}>₹{dailyProfit?.worker_expenses?.toFixed(2)}</Text>
-        </View>
-        
-        <View style={[
-          styles.tableRow,
-          styles.totalRow,
-          { backgroundColor: dailyProfit?.net_profit >= 0 ? '#c8e6c9' : '#ffcdd2' }
-        ]}>
-          <Text style={styles.totalLabel}>Net Profit/Loss</Text>
-          <Text style={styles.totalValue}>₹{dailyProfit?.net_profit?.toFixed(2)}</Text>
-        </View>
-      </View>
+  const getProfitColor = (profit) => {
+    if (profit > 0) return '#27ae60';
+    if (profit < 0) return '#e74c3c';
+    return '#7f8c8d';
+  };
 
-      <View style={styles.modalButtons}>
-        <TouchableOpacity
-          style={styles.modalButton}
-          onPress={() => setModalVisible(false)}
-        >
-          <Text style={styles.modalButtonText}>Close</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[styles.modalButton, styles.printButton]}
-          onPress={() => {
-            Alert.alert('Success', 'Daily profit report printed successfully!');
-            setModalVisible(false);
-          }}
-        >
-          <Text style={styles.printButtonText}>Print Report</Text>
-        </TouchableOpacity>
-      </View>
-    </View>
-  );
+  const getProfitIcon = (profit) => {
+    if (profit > 0) return '📈';
+    if (profit < 0) return '📉';
+    return '➖';
+  };
 
-  const renderMonthlyProfitModal = () => (
-    <View style={styles.modalContent}>
-      <Text style={styles.modalTitle}>Monthly Profit Overview</Text>
-      
-      <ScrollView style={styles.monthlyList}>
-        {monthlyProfit?.profit_by_month && Object.keys(monthlyProfit.profit_by_month).length > 0 ? (
-          Object.entries(monthlyProfit.profit_by_month).map(([month, profit], index) => (
-            <View key={index} style={styles.monthlyItem}>
-              <Text style={styles.monthLabel}>{month}</Text>
-              <Text style={styles.monthProfit}>₹{parseFloat(profit).toFixed(2)}</Text>
-            </View>
-          ))
-        ) : (
-          <Text style={styles.noDataText}>No monthly profit data available</Text>
-        )}
-      </ScrollView>
-
-      <View style={styles.modalButtons}>
-        <TouchableOpacity
-          style={styles.modalButton}
-          onPress={() => setModalVisible(false)}
-        >
-          <Text style={styles.modalButtonText}>Close</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[styles.modalButton, styles.printButton]}
-          onPress={() => {
-            Alert.alert('Success', 'Monthly profit report printed successfully!');
-            setModalVisible(false);
-          }}
-        >
-          <Text style={styles.printButtonText}>Print Report</Text>
-        </TouchableOpacity>
+  if (loading) {
+    return (
+      <View style={styles.loadingContainer}>
+        <ActivityIndicator size="large" color="#2980b9" />
+        <Text style={styles.loadingText}>Loading profit data...</Text>
       </View>
-    </View>
-  );
+    );
+  }
 
   return (
     <View style={styles.container}>
-      {/* Header */}
       <View style={styles.header}>
-        <TouchableOpacity
-          style={styles.backButton}
-          onPress={() => navigation.goBack()}
-        >
-          <Text style={styles.backButtonText}>←</Text>
+        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
+          <Text style={styles.backButtonText}>← Back</Text>
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Date Wise Profit</Text>
-        <View style={styles.placeholder} />
+        <Text style={styles.headerTitle}>Daily Profit</Text>
+        <TouchableOpacity
+          style={styles.refreshButton}
+          onPress={loadData}
+          disabled={loading}
+        >
+          <Text style={styles.refreshButtonText}>↻</Text>
+        </TouchableOpacity>
       </View>
 
-      <ScrollView style={styles.content}>
-        {/* Date Selection */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Select Date</Text>
-          <View style={styles.dateContainer}>
-            <Text style={styles.dateLabel}>Date: {formatDate(selectedDate)}</Text>
-            <TouchableOpacity
-              style={styles.dateButton}
-              onPress={() => {
-                // In a real app, you'd use a date picker component
-                Alert.alert('Date Selection', 'Date picker would open here');
-              }}
-            >
-              <Text style={styles.dateButtonText}>Change Date</Text>
-            </TouchableOpacity>
+      <View style={styles.searchContainer}>
+        <TextInput
+          style={styles.searchInput}
+          placeholder="Search by date, orders, or amount..."
+          value={searchQuery}
+          onChangeText={setSearchQuery}
+        />
+      </View>
+
+      {/* Date Filter Buttons */}
+      <View style={styles.filterContainer}>
+        <TouchableOpacity
+          style={[styles.filterButton, dateFilter === 'all' && styles.filterButtonActive]}
+          onPress={() => setDateFilter('all')}
+        >
+          <Text style={[styles.filterButtonText, dateFilter === 'all' && styles.filterButtonTextActive]}>
+            All Time
+          </Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.filterButton, dateFilter === 'today' && styles.filterButtonActive]}
+          onPress={() => setDateFilter('today')}
+        >
+          <Text style={[styles.filterButtonText, dateFilter === 'today' && styles.filterButtonTextActive]}>
+            Today
+          </Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.filterButton, dateFilter === 'week' && styles.filterButtonActive]}
+          onPress={() => setDateFilter('week')}
+        >
+          <Text style={[styles.filterButtonText, dateFilter === 'week' && styles.filterButtonTextActive]}>
+            This Week
+          </Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.filterButton, dateFilter === 'month' && styles.filterButtonActive]}
+          onPress={() => setDateFilter('month')}
+        >
+          <Text style={[styles.filterButtonText, dateFilter === 'month' && styles.filterButtonTextActive]}>
+            This Month
+          </Text>
+        </TouchableOpacity>
+      </View>
+
+      {/* Summary Statistics */}
+      <View style={styles.summaryContainer}>
+        <View style={styles.summaryRow}>
+          <View style={styles.summaryCard}>
+            <Text style={styles.summaryLabel}>Total Revenue</Text>
+            <Text style={styles.summaryValue}>₹{summaryStats.totalRevenue?.toFixed(2) || '0.00'}</Text>
+          </View>
+          <View style={styles.summaryCard}>
+            <Text style={styles.summaryLabel}>Total Profit</Text>
+            <Text style={[styles.summaryValue, { color: getProfitColor(summaryStats.totalNetProfit) }]}>
+              ₹{summaryStats.totalNetProfit?.toFixed(2) || '0.00'}
+            </Text>
           </View>
         </View>
-
-        {/* Action Buttons */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Profit Analysis</Text>
-          
-          <TouchableOpacity
-            style={styles.actionButton}
-            onPress={handleDailyProfit}
-            disabled={loading}
-          >
-            <Text style={styles.actionButtonText}>
-              {loading ? 'Fetching...' : 'Fetch Daily Profit'}
+        <View style={styles.summaryRow}>
+          <View style={styles.summaryCard}>
+            <Text style={styles.summaryLabel}>Total Orders</Text>
+            <Text style={styles.summaryValue}>{summaryStats.totalOrders || 0}</Text>
+          </View>
+          <View style={styles.summaryCard}>
+            <Text style={styles.summaryLabel}>Profit Margin</Text>
+            <Text style={[styles.summaryValue, { color: getProfitColor(summaryStats.profitMargin) }]}>
+              {summaryStats.profitMargin?.toFixed(1) || '0.0'}%
             </Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={[styles.actionButton, styles.monthlyButton]}
-            onPress={handleMonthlyProfit}
-            disabled={loading}
-          >
-            <Text style={styles.actionButtonText}>
-              {loading ? 'Fetching...' : 'Fetch Monthly Profit'}
-            </Text>
-          </TouchableOpacity>
-        </View>
-
-        {/* Quick Stats */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Quick Overview</Text>
-          <View style={styles.statsGrid}>
-            <View style={styles.statCard}>
-              <Text style={styles.statNumber}>₹15,000</Text>
-              <Text style={styles.statLabel}>Avg Daily Revenue</Text>
-            </View>
-            <View style={styles.statCard}>
-              <Text style={styles.statNumber}>₹8,000</Text>
-              <Text style={styles.statLabel}>Avg Daily Expenses</Text>
-            </View>
-            <View style={styles.statCard}>
-              <Text style={styles.statNumber}>₹7,000</Text>
-              <Text style={styles.statLabel}>Avg Daily Profit</Text>
-            </View>
-            <View style={styles.statCard}>
-              <Text style={styles.statNumber}>₹210,000</Text>
-              <Text style={styles.statLabel}>Monthly Profit</Text>
-            </View>
           </View>
         </View>
-      </ScrollView>
+      </View>
 
-      {/* Results Modal */}
+      <FlatList
+        data={filteredData}
+        renderItem={({ item }) => (
+          <TouchableOpacity
+            style={styles.profitCard}
+            onPress={() => showDateDetail(item)}
+            activeOpacity={0.8}
+          >
+            <View style={styles.cardHeader}>
+              <Text style={styles.dateText}>{formatDate(item.date)}</Text>
+              <Text style={styles.profitIcon}>{getProfitIcon(item.netProfit)}</Text>
+            </View>
+
+            <View style={styles.cardStats}>
+              <View style={styles.statRow}>
+                <Text style={styles.statLabel}>Revenue:</Text>
+                <Text style={styles.statValue}>₹{item.revenue.toFixed(2)}</Text>
+              </View>
+              <View style={styles.statRow}>
+                <Text style={styles.statLabel}>Work Pay:</Text>
+                <Text style={styles.statValue}>₹{item.workPay.toFixed(2)}</Text>
+              </View>
+              <View style={styles.statRow}>
+                <Text style={styles.statLabel}>Expenses:</Text>
+                <Text style={styles.statValue}>₹{(item.shopExpenses + item.workerExpenses).toFixed(2)}</Text>
+              </View>
+              <View style={styles.statRow}>
+                <Text style={styles.statLabel}>Orders:</Text>
+                <Text style={styles.statValue}>{item.orderCount}</Text>
+              </View>
+            </View>
+
+            <View style={styles.profitSection}>
+              <Text style={styles.profitLabel}>Net Profit:</Text>
+              <Text style={[styles.profitAmount, { color: getProfitColor(item.netProfit) }]}>
+                ₹{item.netProfit.toFixed(2)}
+              </Text>
+            </View>
+
+            <View style={styles.cardFooter}>
+              <Text style={styles.tapToView}>Tap to view detailed breakdown</Text>
+            </View>
+          </TouchableOpacity>
+        )}
+        keyExtractor={(item) => item.date}
+        contentContainerStyle={styles.listContainer}
+        refreshing={loading}
+        onRefresh={loadData}
+        showsVerticalScrollIndicator={false}
+      />
+
+      {/* Date Detail Modal */}
       <Modal
         animationType="slide"
         transparent={true}
-        visible={modalVisible}
-        onRequestClose={() => setModalVisible(false)}
+        visible={detailModalVisible}
+        onRequestClose={() => setDetailModalVisible(false)}
       >
         <View style={styles.modalOverlay}>
-          {modalType === 'daily' ? renderDailyProfitModal() : renderMonthlyProfitModal()}
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Daily Breakdown</Text>
+              <TouchableOpacity onPress={() => setDetailModalVisible(false)}>
+                <Text style={styles.closeButton}>✕</Text>
+              </TouchableOpacity>
+            </View>
+
+            {selectedDate && (
+              <ScrollView style={styles.modalBody}>
+                <View style={styles.detailSection}>
+                  <Text style={styles.detailLabel}>Date: {formatDate(selectedDate.date)}</Text>
+                  <View style={styles.dateSummary}>
+                    <Text style={styles.dateSummaryText}>
+                      {selectedDate.orderCount} orders • ₹{selectedDate.revenue.toFixed(2)} revenue
+                    </Text>
+                  </View>
+                </View>
+
+                <View style={styles.detailSection}>
+                  <Text style={styles.detailLabel}>Financial Summary</Text>
+                  <View style={styles.financialRow}>
+                    <Text style={styles.financialLabel}>Revenue:</Text>
+                    <Text style={styles.financialValue}>₹{selectedDate.revenue.toFixed(2)}</Text>
+                  </View>
+                  <View style={styles.financialRow}>
+                    <Text style={styles.financialLabel}>Work Pay:</Text>
+                    <Text style={styles.financialValue}>₹{selectedDate.workPay.toFixed(2)}</Text>
+                  </View>
+                  <View style={styles.financialRow}>
+                    <Text style={styles.financialLabel}>Shop Expenses:</Text>
+                    <Text style={styles.financialValue}>₹{selectedDate.shopExpenses.toFixed(2)}</Text>
+                  </View>
+                  <View style={styles.financialRow}>
+                    <Text style={styles.financialLabel}>Worker Expenses:</Text>
+                    <Text style={styles.financialValue}>₹{selectedDate.workerExpenses.toFixed(2)}</Text>
+                  </View>
+                  <View style={[styles.financialRow, styles.netProfitRow]}>
+                    <Text style={styles.financialLabel}>Net Profit:</Text>
+                    <Text style={[styles.financialValue, { color: getProfitColor(selectedDate.netProfit) }]}>
+                      ₹{selectedDate.netProfit.toFixed(2)}
+                    </Text>
+                  </View>
+                </View>
+
+                <View style={styles.detailSection}>
+                  <Text style={styles.detailLabel}>Orders ({selectedDate.orders.length})</Text>
+                  {selectedDate.orders.length > 0 ? (
+                    selectedDate.orders.map((order, index) => (
+                      <View key={index} style={styles.orderItem}>
+                        <Text style={styles.orderText}>Order #{order.id}</Text>
+                        <Text style={styles.orderAmount}>₹{order.Work_pay || 0}</Text>
+                        <Text style={styles.orderDate}>
+                          {new Date(order.order_date).toLocaleDateString()}
+                        </Text>
+                      </View>
+                    ))
+                  ) : (
+                    <Text style={styles.noDataText}>No orders for this date</Text>
+                  )}
+                </View>
+
+                <View style={styles.detailSection}>
+                  <Text style={styles.detailLabel}>Expenses ({selectedDate.expenses.length})</Text>
+                  {selectedDate.expenses.length > 0 ? (
+                    selectedDate.expenses.map((expense, index) => (
+                      <View key={index} style={styles.expenseItem}>
+                        <Text style={styles.expenseText}>
+                          {expense.name || expense.expense_name} ({expense.type})
+                        </Text>
+                        <Text style={styles.expenseAmount}>₹{expense.Amt_Paid || 0}</Text>
+                        <Text style={styles.expenseDate}>
+                          {new Date(expense.date).toLocaleDateString()}
+                        </Text>
+                      </View>
+                    ))
+                  ) : (
+                    <Text style={styles.noDataText}>No expenses for this date</Text>
+                  )}
+                </View>
+              </ScrollView>
+            )}
+
+            <View style={styles.modalButtons}>
+              <TouchableOpacity
+                style={[styles.modalButton, styles.closeDetailButton]}
+                onPress={() => setDetailModalVisible(false)}
+              >
+                <Text style={styles.closeDetailButtonText}>Close</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
         </View>
       </Modal>
     </View>
@@ -309,6 +550,17 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#f8f9fa',
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#f8f9fa',
+  },
+  loadingText: {
+    marginTop: 10,
+    fontSize: 16,
+    color: '#7f8c8d',
   },
   header: {
     flexDirection: 'row',
@@ -326,103 +578,172 @@ const styles = StyleSheet.create({
     padding: 8,
   },
   backButtonText: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: '#34495e',
+    fontSize: 16,
+    color: '#2980b9',
   },
   headerTitle: {
     fontSize: 20,
     fontWeight: 'bold',
     color: '#2c3e50',
   },
-  placeholder: {
-    width: 50,
+  refreshButton: {
+    backgroundColor: '#2980b9',
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
-  content: {
-    flex: 1,
-    padding: 20,
-  },
-  section: {
-    marginBottom: 24,
-  },
-  sectionTitle: {
+  refreshButtonText: {
+    color: '#fff',
     fontSize: 18,
     fontWeight: 'bold',
-    color: '#2c3e50',
-    marginBottom: 12,
   },
-  dateContainer: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    backgroundColor: '#fff',
-    borderRadius: 8,
+  searchContainer: {
     padding: 16,
-    elevation: 2,
-    shadowColor: '#000',
-    shadowOpacity: 0.08,
-    shadowRadius: 4,
-    shadowOffset: { width: 0, height: 2 },
+    backgroundColor: '#fff',
+    borderBottomWidth: 1,
+    borderBottomColor: '#e9ecef',
   },
-  dateLabel: {
+  searchInput: {
+    borderWidth: 1,
+    borderColor: '#ddd',
+    borderRadius: 8,
+    padding: 12,
     fontSize: 16,
-    color: '#2c3e50',
-    fontWeight: '600',
   },
-  dateButton: {
-    backgroundColor: '#2980b9',
-    borderRadius: 6,
+  filterContainer: {
+    flexDirection: 'row',
+    padding: 16,
+    backgroundColor: '#fff',
+    borderBottomWidth: 1,
+    borderBottomColor: '#e9ecef',
+  },
+  filterButton: {
+    flex: 1,
+    paddingVertical: 8,
     paddingHorizontal: 12,
-    paddingVertical: 6,
+    marginHorizontal: 4,
+    borderRadius: 20,
+    backgroundColor: '#f8f9fa',
+    borderWidth: 1,
+    borderColor: '#e9ecef',
   },
-  dateButtonText: {
-    color: '#fff',
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  actionButton: {
+  filterButtonActive: {
     backgroundColor: '#2980b9',
-    borderRadius: 8,
-    padding: 16,
-    alignItems: 'center',
-    marginBottom: 12,
+    borderColor: '#2980b9',
   },
-  monthlyButton: {
-    backgroundColor: '#27ae60',
-  },
-  actionButtonText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: 'bold',
-  },
-  statsGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    justifyContent: 'space-between',
-    gap: 12,
-  },
-  statCard: {
-    width: '47%',
-    backgroundColor: '#fff',
-    borderRadius: 8,
-    padding: 16,
-    alignItems: 'center',
-    elevation: 2,
-    shadowColor: '#000',
-    shadowOpacity: 0.08,
-    shadowRadius: 4,
-    shadowOffset: { width: 0, height: 2 },
-  },
-  statNumber: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: '#2980b9',
-    marginBottom: 4,
-  },
-  statLabel: {
+  filterButtonText: {
     fontSize: 12,
     color: '#7f8c8d',
     textAlign: 'center',
+    fontWeight: '500',
+  },
+  filterButtonTextActive: {
+    color: '#fff',
+  },
+  summaryContainer: {
+    padding: 16,
+    backgroundColor: '#fff',
+    marginBottom: 8,
+  },
+  summaryRow: {
+    flexDirection: 'row',
+    marginBottom: 12,
+  },
+  summaryCard: {
+    flex: 1,
+    backgroundColor: '#f8f9fa',
+    padding: 12,
+    borderRadius: 8,
+    marginHorizontal: 4,
+    alignItems: 'center',
+  },
+  summaryLabel: {
+    fontSize: 12,
+    color: '#7f8c8d',
+    marginBottom: 4,
+  },
+  summaryValue: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#2c3e50',
+  },
+  listContainer: {
+    padding: 16,
+  },
+  profitCard: {
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 12,
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOpacity: 0.08,
+    shadowRadius: 4,
+    shadowOffset: { width: 0, height: 2 },
+  },
+  cardHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12,
+    paddingBottom: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e9ecef',
+  },
+  dateText: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#2c3e50',
+  },
+  profitIcon: {
+    fontSize: 20,
+  },
+  cardStats: {
+    marginBottom: 12,
+  },
+  statRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 6,
+  },
+  statLabel: {
+    fontSize: 14,
+    color: '#7f8c8d',
+    fontWeight: '500',
+  },
+  statValue: {
+    fontSize: 14,
+    fontWeight: 'bold',
+    color: '#2c3e50',
+  },
+  profitSection: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: '#e9ecef',
+    marginBottom: 8,
+  },
+  profitLabel: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#2c3e50',
+  },
+  profitAmount: {
+    fontSize: 18,
+    fontWeight: 'bold',
+  },
+  cardFooter: {
+    alignItems: 'center',
+  },
+  tapToView: {
+    fontSize: 12,
+    color: '#7f8c8d',
+    fontStyle: 'italic',
   },
   modalOverlay: {
     flex: 1,
@@ -433,131 +754,151 @@ const styles = StyleSheet.create({
   modalContent: {
     backgroundColor: '#fff',
     borderRadius: 12,
-    padding: 24,
     width: '90%',
-    maxWidth: 400,
     maxHeight: '80%',
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e9ecef',
   },
   modalTitle: {
     fontSize: 20,
     fontWeight: 'bold',
     color: '#2c3e50',
-    textAlign: 'center',
-    marginBottom: 20,
   },
-  profitTable: {
-    marginBottom: 20,
+  closeButton: {
+    fontSize: 24,
+    color: '#7f8c8d',
   },
-  tableHeader: {
-    flexDirection: 'row',
-    backgroundColor: '#3498db',
-    paddingVertical: 12,
-    paddingHorizontal: 15,
+  modalBody: {
+    padding: 20,
+    maxHeight: 400,
+  },
+  detailSection: {
+    marginBottom: 20,
+    paddingBottom: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e9ecef',
+  },
+  detailLabel: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#2c3e50',
+    marginBottom: 12,
+  },
+  dateSummary: {
+    backgroundColor: '#f8f9fa',
+    padding: 12,
     borderRadius: 8,
-    marginBottom: 8,
   },
-  headerCell: {
-    flex: 1,
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: 'bold',
-  },
-  tableRow: {
-    flexDirection: 'row',
-    paddingVertical: 12,
-    paddingHorizontal: 15,
-    borderRadius: 6,
-    marginBottom: 4,
-  },
-  revenueRow: {
-    backgroundColor: '#e8f5e9',
-  },
-  expenseRow: {
-    backgroundColor: '#ffebee',
-  },
-  totalRow: {
-    fontSize: 18,
-    fontWeight: 'bold',
-  },
-  cellLabel: {
-    flex: 1,
+  dateSummaryText: {
     fontSize: 14,
-    color: '#2c3e50',
-    fontWeight: '500',
+    color: '#7f8c8d',
+    textAlign: 'center',
   },
-  cellValue: {
-    flex: 1,
-    fontSize: 14,
-    color: '#2c3e50',
-    fontWeight: '600',
-    textAlign: 'right',
-  },
-  totalLabel: {
-    flex: 1,
-    fontSize: 16,
-    color: '#2c3e50',
-    fontWeight: 'bold',
-  },
-  totalValue: {
-    flex: 1,
-    fontSize: 16,
-    color: '#2c3e50',
-    fontWeight: 'bold',
-    textAlign: 'right',
-  },
-  monthlyList: {
-    maxHeight: 300,
-    marginBottom: 20,
-  },
-  monthlyItem: {
+  financialRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingVertical: 12,
-    paddingHorizontal: 15,
-    backgroundColor: '#f8f9fa',
-    borderRadius: 6,
     marginBottom: 8,
   },
-  monthLabel: {
-    fontSize: 16,
-    color: '#2c3e50',
-    fontWeight: '600',
+  financialLabel: {
+    fontSize: 14,
+    color: '#7f8c8d',
+    fontWeight: '500',
   },
-  monthProfit: {
-    fontSize: 16,
-    color: '#27ae60',
+  financialValue: {
+    fontSize: 14,
     fontWeight: 'bold',
+    color: '#2c3e50',
+  },
+  netProfitRow: {
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: '#e9ecef',
+    marginTop: 8,
+  },
+  orderItem: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 6,
+    paddingHorizontal: 8,
+    backgroundColor: '#f8f9fa',
+    borderRadius: 6,
+    marginBottom: 4,
+  },
+  orderText: {
+    fontSize: 14,
+    color: '#2c3e50',
+    flex: 1,
+  },
+  orderAmount: {
+    fontSize: 14,
+    fontWeight: 'bold',
+    color: '#2980b9',
+    marginRight: 8,
+  },
+  orderDate: {
+    fontSize: 12,
+    color: '#7f8c8d',
+  },
+  expenseItem: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 6,
+    paddingHorizontal: 8,
+    backgroundColor: '#fff5f5',
+    borderRadius: 6,
+    marginBottom: 4,
+  },
+  expenseText: {
+    fontSize: 14,
+    color: '#2c3e50',
+    flex: 1,
+  },
+  expenseAmount: {
+    fontSize: 14,
+    fontWeight: 'bold',
+    color: '#e74c3c',
+    marginRight: 8,
+  },
+  expenseDate: {
+    fontSize: 12,
+    color: '#7f8c8d',
   },
   noDataText: {
-    fontSize: 16,
+    fontSize: 14,
     color: '#7f8c8d',
+    fontStyle: 'italic',
     textAlign: 'center',
-    paddingVertical: 20,
+    paddingVertical: 12,
   },
   modalButtons: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    gap: 12,
+    padding: 20,
+    borderTopWidth: 1,
+    borderTopColor: '#e9ecef',
   },
   modalButton: {
     flex: 1,
-    padding: 12,
+    paddingVertical: 12,
     borderRadius: 8,
-    alignItems: 'center',
-    backgroundColor: '#ecf0f1',
+    marginHorizontal: 8,
   },
-  modalButtonText: {
-    fontSize: 16,
-    color: '#2c3e50',
-    fontWeight: '600',
+  closeDetailButton: {
+    backgroundColor: '#2980b9',
   },
-  printButton: {
-    backgroundColor: '#27ae60',
-  },
-  printButtonText: {
-    fontSize: 16,
+  closeDetailButtonText: {
     color: '#fff',
-    fontWeight: '600',
+    fontSize: 16,
+    fontWeight: 'bold',
+    textAlign: 'center',
   },
 }); 

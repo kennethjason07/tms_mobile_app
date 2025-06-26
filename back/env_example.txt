@@ -1,0 +1,6 @@
+# Supabase Configuration
+SUPABASE_URL=your-supabase-project-url
+SUPABASE_KEY=your-supabase-anon-key
+
+# Optional: Database URL (if you want to keep both for migration)
+DATABASE_URL=sqlite:///tms.db 

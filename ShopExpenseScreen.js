@@ -2,321 +2,332 @@ import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
-  TextInput,
-  TouchableOpacity,
   StyleSheet,
-  ScrollView,
-  Alert,
-  Image,
   FlatList,
+  TouchableOpacity,
+  Alert,
+  ActivityIndicator,
+  TextInput,
   Modal,
+  ScrollView,
 } from 'react-native';
+import { SupabaseAPI } from './supabase';
 
 export default function ShopExpenseScreen({ navigation }) {
   const [expenses, setExpenses] = useState([]);
+  const [filteredExpenses, setFilteredExpenses] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [showForm, setShowForm] = useState(false);
-  const [formData, setFormData] = useState({
-    date: new Date().toISOString().split('T')[0],
-    materialCost: '',
-    materialType: '',
-    miscellaneousCost: '',
-    miscellaneousItem: '',
-    chaiPaniCost: '',
-    totalPay: '',
+  const [searchQuery, setSearchQuery] = useState('');
+  const [modalVisible, setModalVisible] = useState(false);
+  const [newExpense, setNewExpense] = useState({
+    Date: '',
+    material_cost: '',
+    material_type: '',
+    miscellaneous_Cost: '',
+    miscellaenous_item: '',
+    chai_pani_cost: '',
+    Total_Pay: '',
   });
 
   useEffect(() => {
-    fetchDailyExpenses();
+    loadExpenses();
   }, []);
 
-  const fetchDailyExpenses = async () => {
-    setLoading(true);
+  useEffect(() => {
+    filterExpenses();
+  }, [searchQuery, expenses]);
+
+  const loadExpenses = async () => {
     try {
-      const response = await fetch('http://127.0.0.1:5000/api/daily_expenses');
-      const data = await response.json();
-      
-      if (data && data.length > 0) {
-        // Sort the data in descending order by date
-        const sortedData = data.sort((a, b) => new Date(b.Date) - new Date(a.Date));
-        setExpenses(sortedData);
-      } else {
-        setExpenses([]);
-      }
+      setLoading(true);
+      const data = await SupabaseAPI.getDailyExpenses();
+      setExpenses(data);
+      setFilteredExpenses(data);
     } catch (error) {
-      console.error('Error fetching expenses:', error);
-      Alert.alert('Error', 'Failed to fetch expenses');
+      Alert.alert('Error', `Failed to load expenses: ${error.message}`);
     } finally {
       setLoading(false);
     }
   };
 
-  const handleInputChange = (field, value) => {
-    setFormData(prev => ({
-      ...prev,
-      [field]: value,
-    }));
-  };
-
-  const calculateTotal = () => {
-    const material = parseFloat(formData.materialCost) || 0;
-    const misc = parseFloat(formData.miscellaneousCost) || 0;
-    const chaiPani = parseFloat(formData.chaiPaniCost) || 0;
-    const total = material + misc + chaiPani;
-    setFormData(prev => ({ ...prev, totalPay: total.toString() }));
-  };
-
-  const addExpense = async () => {
-    // Validate required fields
-    if (!formData.date || !formData.totalPay) {
-      Alert.alert('Error', 'Please fill in all required fields (Date and Total Pay)');
+  const filterExpenses = () => {
+    if (!searchQuery.trim()) {
+      setFilteredExpenses(expenses);
       return;
     }
 
-    const expenseData = {
-      Date: formData.date,
-      material_cost: formData.materialCost || 0,
-      material_type: formData.materialType || '',
-      miscellaneous_Cost: formData.miscellaneousCost || 0,
-      miscellaenous_item: formData.miscellaneousItem || '',
-      chai_pani_cost: formData.chaiPaniCost || 0,
-      Total_Pay: parseFloat(formData.totalPay),
-    };
+    const filtered = expenses.filter(expense => 
+      expense.material_type?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      expense.miscellaenous_item?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      expense.Date?.includes(searchQuery)
+    );
+    setFilteredExpenses(filtered);
+  };
+
+  const handleAddExpense = async () => {
+    if (!newExpense.Date || !newExpense.Total_Pay) {
+      Alert.alert('Error', 'Date and Total Pay are required fields');
+      return;
+    }
 
     try {
-      const response = await fetch('http://127.0.0.1:5000/api/daily_expenses', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(expenseData),
-      });
+      setLoading(true);
+      const expenseData = {
+        Date: newExpense.Date,
+        material_cost: parseFloat(newExpense.material_cost) || 0,
+        material_type: newExpense.material_type || '',
+        miscellaneous_Cost: parseFloat(newExpense.miscellaneous_Cost) || 0,
+        miscellaenous_item: newExpense.miscellaenous_item || '',
+        chai_pani_cost: parseFloat(newExpense.chai_pani_cost) || 0,
+        Total_Pay: parseFloat(newExpense.Total_Pay),
+      };
 
-      const data = await response.json();
-      console.log('Response from server:', data);
-      
-      Alert.alert('Success', 'Expense added successfully!');
-      setShowForm(false);
-      resetForm();
-      fetchDailyExpenses(); // Refresh the expenses list
+      await SupabaseAPI.addDailyExpense(expenseData);
+      setModalVisible(false);
+      setNewExpense({
+        Date: '',
+        material_cost: '',
+        material_type: '',
+        miscellaneous_Cost: '',
+        miscellaenous_item: '',
+        chai_pani_cost: '',
+        Total_Pay: '',
+      });
+      loadExpenses(); // Reload the list
+      Alert.alert('Success', 'Expense added successfully');
     } catch (error) {
-      console.error('Error adding expense:', error);
-      Alert.alert('Error', 'Failed to add expense');
+      Alert.alert('Error', `Failed to add expense: ${error.message}`);
+    } finally {
+      setLoading(false);
     }
   };
 
-  const resetForm = () => {
-    setFormData({
-      date: new Date().toISOString().split('T')[0],
-      materialCost: '',
-      materialType: '',
-      miscellaneousCost: '',
-      miscellaneousItem: '',
-      chaiPaniCost: '',
-      totalPay: '',
-    });
+  const calculateTotalExpenses = () => {
+    return filteredExpenses.reduce((total, expense) => {
+      return total + (expense.material_cost || 0) + 
+             (expense.miscellaneous_Cost || 0) + 
+             (expense.chai_pani_cost || 0);
+    }, 0);
   };
 
-  const renderExpenseItem = ({ item: expense }) => (
+  const getTodayDate = () => {
+    const today = new Date();
+    return today.toISOString().split('T')[0];
+  };
+
+  const renderExpense = ({ item }) => (
     <View style={styles.expenseCard}>
       <View style={styles.expenseHeader}>
-        <Text style={styles.expenseId}>ID: {expense.id}</Text>
-        <Text style={styles.expenseDate}>{expense.Date}</Text>
+        <Text style={styles.expenseDate}>
+          {new Date(item.Date).toLocaleDateString()}
+        </Text>
+        <Text style={styles.expenseTotal}>₹{item.Total_Pay}</Text>
       </View>
 
       <View style={styles.expenseDetails}>
-        <View style={styles.expenseRow}>
-          <Text style={styles.expenseLabel}>Material Cost:</Text>
-          <Text style={styles.expenseValue}>₹{expense.material_cost || 0}</Text>
-        </View>
+        {item.material_type && (
+          <View style={styles.expenseRow}>
+            <Text style={styles.expenseLabel}>Material:</Text>
+            <Text style={styles.expenseValue}>
+              {item.material_type} - ₹{item.material_cost || 0}
+            </Text>
+          </View>
+        )}
 
-        <View style={styles.expenseRow}>
-          <Text style={styles.expenseLabel}>Material Type:</Text>
-          <Text style={styles.expenseValue}>{expense.material_type || 'N/A'}</Text>
-        </View>
+        {item.miscellaenous_item && (
+          <View style={styles.expenseRow}>
+            <Text style={styles.expenseLabel}>Miscellaneous:</Text>
+            <Text style={styles.expenseValue}>
+              {item.miscellaenous_item} - ₹{item.miscellaneous_Cost || 0}
+            </Text>
+          </View>
+        )}
 
-        <View style={styles.expenseRow}>
-          <Text style={styles.expenseLabel}>Miscellaneous Cost:</Text>
-          <Text style={styles.expenseValue}>₹{expense.miscellaneous_Cost || 0}</Text>
-        </View>
+        {item.chai_pani_cost > 0 && (
+          <View style={styles.expenseRow}>
+            <Text style={styles.expenseLabel}>Chai/Pani:</Text>
+            <Text style={styles.expenseValue}>₹{item.chai_pani_cost}</Text>
+          </View>
+        )}
+      </View>
 
-        <View style={styles.expenseRow}>
-          <Text style={styles.expenseLabel}>Miscellaneous Item:</Text>
-          <Text style={styles.expenseValue}>{expense.miscellaenous_item || 'N/A'}</Text>
-        </View>
-
-        <View style={styles.expenseRow}>
-          <Text style={styles.expenseLabel}>Chai Pani Cost:</Text>
-          <Text style={styles.expenseValue}>₹{expense.chai_pani_cost || 0}</Text>
-        </View>
-
-        <View style={styles.expenseRow}>
-          <Text style={styles.expenseLabel}>Total Pay:</Text>
-          <Text style={[styles.expenseValue, styles.totalAmount]}>₹{expense.Total_Pay}</Text>
-        </View>
+      <View style={styles.expenseBreakdown}>
+        <Text style={styles.breakdownText}>
+          Breakdown: Material ₹{item.material_cost || 0} + 
+          Misc ₹{item.miscellaneous_Cost || 0} + 
+          Chai/Pani ₹{item.chai_pani_cost || 0} = 
+          Total ₹{item.Total_Pay}
+        </Text>
       </View>
     </View>
   );
 
+  if (loading && expenses.length === 0) {
+    return (
+      <View style={styles.loadingContainer}>
+        <ActivityIndicator size="large" color="#2980b9" />
+        <Text style={styles.loadingText}>Loading expenses...</Text>
+      </View>
+    );
+  }
+
   return (
     <View style={styles.container}>
-      {/* Header */}
       <View style={styles.header}>
-        <TouchableOpacity
-          style={styles.backButton}
-          onPress={() => navigation.goBack()}
-        >
-          <Text style={styles.backButtonText}>←</Text>
+        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
+          <Text style={styles.backButtonText}>← Back</Text>
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Shop Expenses</Text>
-        <View style={styles.placeholder} />
+        <TouchableOpacity
+          style={styles.addButton}
+          onPress={() => setModalVisible(true)}
+          disabled={loading}
+        >
+          <Text style={styles.addButtonText}>+ Add</Text>
+        </TouchableOpacity>
       </View>
 
-      <ScrollView style={styles.content}>
-        <Text style={styles.screenTitle}>Shop Expenses</Text>
+      <View style={styles.searchContainer}>
+        <TextInput
+          style={styles.searchInput}
+          placeholder="Search by material type, item, or date..."
+          value={searchQuery}
+          onChangeText={setSearchQuery}
+        />
+      </View>
 
-        {/* Add New Expense Button */}
-        <View style={styles.section}>
-          <TouchableOpacity
-            style={styles.addButton}
-            onPress={() => setShowForm(!showForm)}
-          >
-            <Text style={styles.addButtonText}>
-              {showForm ? 'Hide Form' : 'Add New Expense'}
-            </Text>
-          </TouchableOpacity>
+      <View style={styles.statsContainer}>
+        <View style={styles.statItem}>
+          <Text style={styles.statNumber}>{filteredExpenses.length}</Text>
+          <Text style={styles.statLabel}>Total Entries</Text>
         </View>
+        <View style={styles.statItem}>
+          <Text style={styles.statNumber}>₹{calculateTotalExpenses().toFixed(2)}</Text>
+          <Text style={styles.statLabel}>Total Expenses</Text>
+        </View>
+        <View style={styles.statItem}>
+          <Text style={styles.statNumber}>
+            ₹{(calculateTotalExpenses() / Math.max(filteredExpenses.length, 1)).toFixed(2)}
+          </Text>
+          <Text style={styles.statLabel}>Avg per Entry</Text>
+        </View>
+      </View>
 
-        {/* Add Expense Form */}
-        {showForm && (
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Add New Expense</Text>
-            
-            <View style={styles.formContainer}>
-              <View style={styles.inputRow}>
-                <Text style={styles.inputLabel}>Date:</Text>
-                <TextInput
-                  style={styles.dateInput}
-                  value={formData.date}
-                  onChangeText={(value) => handleInputChange('date', value)}
-                  placeholder="YYYY-MM-DD"
-                />
-              </View>
+      <FlatList
+        data={filteredExpenses}
+        renderItem={renderExpense}
+        keyExtractor={(item) => item.id.toString()}
+        contentContainerStyle={styles.listContainer}
+        refreshing={loading}
+        onRefresh={loadExpenses}
+        showsVerticalScrollIndicator={false}
+      />
 
-              <View style={styles.inputRow}>
-                <Text style={styles.inputLabel}>Material Cost:</Text>
-                <TextInput
-                  style={styles.numberInput}
-                  value={formData.materialCost}
-                  onChangeText={(value) => {
-                    handleInputChange('materialCost', value);
-                    calculateTotal();
-                  }}
-                  placeholder="0"
-                  keyboardType="numeric"
-                />
-              </View>
+      {/* Add Expense Modal */}
+      <Modal
+        animationType="slide"
+        transparent={true}
+        visible={modalVisible}
+        onRequestClose={() => setModalVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Add Daily Expense</Text>
+              <TouchableOpacity onPress={() => setModalVisible(false)}>
+                <Text style={styles.closeButton}>✕</Text>
+              </TouchableOpacity>
+            </View>
 
-              <View style={styles.inputRow}>
-                <Text style={styles.inputLabel}>Material Type:</Text>
-                <TextInput
-                  style={styles.textInput}
-                  value={formData.materialType}
-                  onChangeText={(value) => handleInputChange('materialType', value)}
-                  placeholder="Enter material type"
-                />
-              </View>
+            <ScrollView style={styles.modalBody}>
+              <TextInput
+                style={styles.input}
+                placeholder="Date (YYYY-MM-DD)"
+                value={newExpense.Date}
+                onChangeText={(text) => setNewExpense({ ...newExpense, Date: text })}
+                defaultValue={getTodayDate()}
+              />
 
-              <View style={styles.inputRow}>
-                <Text style={styles.inputLabel}>Miscellaneous Cost:</Text>
-                <TextInput
-                  style={styles.numberInput}
-                  value={formData.miscellaneousCost}
-                  onChangeText={(value) => {
-                    handleInputChange('miscellaneousCost', value);
-                    calculateTotal();
-                  }}
-                  placeholder="0"
-                  keyboardType="numeric"
-                />
-              </View>
+              <TextInput
+                style={styles.input}
+                placeholder="Material Type (optional)"
+                value={newExpense.material_type}
+                onChangeText={(text) => setNewExpense({ ...newExpense, material_type: text })}
+              />
 
-              <View style={styles.inputRow}>
-                <Text style={styles.inputLabel}>Miscellaneous Item:</Text>
-                <TextInput
-                  style={styles.textInput}
-                  value={formData.miscellaneousItem}
-                  onChangeText={(value) => handleInputChange('miscellaneousItem', value)}
-                  placeholder="Enter item description"
-                />
-              </View>
+              <TextInput
+                style={styles.input}
+                placeholder="Material Cost"
+                value={newExpense.material_cost}
+                onChangeText={(text) => setNewExpense({ ...newExpense, material_cost: text })}
+                keyboardType="numeric"
+              />
 
-              <View style={styles.inputRow}>
-                <Text style={styles.inputLabel}>Chai Pani Cost:</Text>
-                <TextInput
-                  style={styles.numberInput}
-                  value={formData.chaiPaniCost}
-                  onChangeText={(value) => {
-                    handleInputChange('chaiPaniCost', value);
-                    calculateTotal();
-                  }}
-                  placeholder="0"
-                  keyboardType="numeric"
-                />
-              </View>
+              <TextInput
+                style={styles.input}
+                placeholder="Miscellaneous Item (optional)"
+                value={newExpense.miscellaenous_item}
+                onChangeText={(text) => setNewExpense({ ...newExpense, miscellaenous_item: text })}
+              />
 
-              <View style={styles.inputRow}>
-                <Text style={styles.inputLabel}>Total Pay:</Text>
-                <TextInput
-                  style={[styles.numberInput, styles.totalInput]}
-                  value={formData.totalPay}
-                  onChangeText={(value) => handleInputChange('totalPay', value)}
-                  placeholder="0"
-                  keyboardType="numeric"
-                  editable={false}
-                />
-              </View>
+              <TextInput
+                style={styles.input}
+                placeholder="Miscellaneous Cost"
+                value={newExpense.miscellaneous_Cost}
+                onChangeText={(text) => setNewExpense({ ...newExpense, miscellaneous_Cost: text })}
+                keyboardType="numeric"
+              />
 
-              <View style={styles.formButtons}>
-                <TouchableOpacity
-                  style={styles.submitButton}
-                  onPress={addExpense}
-                >
-                  <Text style={styles.submitButtonText}>Submit</Text>
-                </TouchableOpacity>
-                
-                <TouchableOpacity
-                  style={styles.cancelButton}
-                  onPress={() => {
-                    setShowForm(false);
-                    resetForm();
-                  }}
-                >
-                  <Text style={styles.cancelButtonText}>Cancel</Text>
-                </TouchableOpacity>
+              <TextInput
+                style={styles.input}
+                placeholder="Chai/Pani Cost"
+                value={newExpense.chai_pani_cost}
+                onChangeText={(text) => setNewExpense({ ...newExpense, chai_pani_cost: text })}
+                keyboardType="numeric"
+              />
+
+              <TextInput
+                style={styles.input}
+                placeholder="Total Pay (required)"
+                value={newExpense.Total_Pay}
+                onChangeText={(text) => setNewExpense({ ...newExpense, Total_Pay: text })}
+                keyboardType="numeric"
+              />
+
+              <View style={styles.calculationPreview}>
+                <Text style={styles.calculationText}>
+                  Preview: Material ₹{parseFloat(newExpense.material_cost) || 0} + 
+                  Misc ₹{parseFloat(newExpense.miscellaneous_Cost) || 0} + 
+                  Chai/Pani ₹{parseFloat(newExpense.chai_pani_cost) || 0} = 
+                  ₹{(parseFloat(newExpense.material_cost) || 0) + 
+                    (parseFloat(newExpense.miscellaneous_Cost) || 0) + 
+                    (parseFloat(newExpense.chai_pani_cost) || 0)}
+                </Text>
               </View>
+            </ScrollView>
+
+            <View style={styles.modalButtons}>
+              <TouchableOpacity
+                style={[styles.modalButton, styles.cancelButton]}
+                onPress={() => setModalVisible(false)}
+              >
+                <Text style={styles.cancelButtonText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.modalButton, styles.saveButton]}
+                onPress={handleAddExpense}
+                disabled={loading}
+              >
+                {loading ? (
+                  <ActivityIndicator size="small" color="#fff" />
+                ) : (
+                  <Text style={styles.saveButtonText}>Save</Text>
+                )}
+              </TouchableOpacity>
             </View>
           </View>
-        )}
-
-        {/* Expenses List */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Expenses History ({expenses.length})</Text>
-          {loading ? (
-            <Text style={styles.loadingText}>Loading expenses...</Text>
-          ) : expenses.length > 0 ? (
-            <FlatList
-              data={expenses}
-              renderItem={renderExpenseItem}
-              keyExtractor={(item) => item.id.toString()}
-              scrollEnabled={false}
-              showsVerticalScrollIndicator={false}
-            />
-          ) : (
-            <Text style={styles.noExpensesText}>No expenses found.</Text>
-          )}
         </View>
-      </ScrollView>
+      </Modal>
     </View>
   );
 }
@@ -326,9 +337,21 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#f8f9fa',
   },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#f8f9fa',
+  },
+  loadingText: {
+    marginTop: 10,
+    fontSize: 16,
+    color: '#7f8c8d',
+  },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'space-between',
     padding: 16,
     backgroundColor: '#fff',
     elevation: 4,
@@ -339,198 +362,203 @@ const styles = StyleSheet.create({
   },
   backButton: {
     padding: 8,
-    marginRight: 12,
   },
   backButtonText: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: '#34495e',
+    fontSize: 16,
+    color: '#2980b9',
   },
   headerTitle: {
-    fontSize: 18,
+    fontSize: 20,
     fontWeight: 'bold',
-    color: '#34495e',
-  },
-  placeholder: {
-    flex: 1,
-  },
-  content: {
-    flex: 1,
-    padding: 16,
-  },
-  screenTitle: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    marginBottom: 20,
     color: '#2c3e50',
-  },
-  section: {
-    backgroundColor: '#fff',
-    borderRadius: 8,
-    padding: 16,
-    marginBottom: 16,
-    elevation: 2,
-    shadowColor: '#000',
-    shadowOpacity: 0.08,
-    shadowRadius: 4,
-    shadowOffset: { width: 0, height: 2 },
-  },
-  sectionTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    marginBottom: 12,
-    color: '#2980b9',
   },
   addButton: {
     backgroundColor: '#27ae60',
-    padding: 16,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
     borderRadius: 8,
-    alignItems: 'center',
   },
   addButtonText: {
     color: '#fff',
     fontSize: 16,
     fontWeight: 'bold',
   },
-  formContainer: {
-    gap: 12,
-  },
-  inputRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  inputLabel: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    color: '#34495e',
-    flex: 1,
-  },
-  textInput: {
-    flex: 1,
-    borderWidth: 1,
-    borderColor: '#ddd',
-    borderRadius: 4,
-    padding: 12,
-    marginLeft: 12,
-    fontSize: 16,
-  },
-  numberInput: {
-    flex: 1,
-    borderWidth: 1,
-    borderColor: '#ddd',
-    borderRadius: 4,
-    padding: 12,
-    marginLeft: 12,
-    fontSize: 16,
-    textAlign: 'right',
-  },
-  dateInput: {
-    flex: 1,
-    borderWidth: 1,
-    borderColor: '#ddd',
-    borderRadius: 4,
-    padding: 12,
-    marginLeft: 12,
-    fontSize: 16,
-  },
-  totalInput: {
-    backgroundColor: '#f8f9fa',
-    fontWeight: 'bold',
-    color: '#27ae60',
-  },
-  formButtons: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginTop: 16,
-  },
-  submitButton: {
-    flex: 1,
-    backgroundColor: '#2980b9',
+  searchContainer: {
     padding: 16,
+    backgroundColor: '#fff',
+    borderBottomWidth: 1,
+    borderBottomColor: '#e9ecef',
+  },
+  searchInput: {
+    borderWidth: 1,
+    borderColor: '#ddd',
     borderRadius: 8,
-    alignItems: 'center',
-    marginRight: 8,
-  },
-  submitButtonText: {
-    color: '#fff',
+    padding: 12,
     fontSize: 16,
-    fontWeight: 'bold',
   },
-  cancelButton: {
-    flex: 1,
-    backgroundColor: '#e74c3c',
+  statsContainer: {
+    flexDirection: 'row',
     padding: 16,
-    borderRadius: 8,
-    alignItems: 'center',
-    marginLeft: 8,
+    backgroundColor: '#fff',
+    marginBottom: 8,
   },
-  cancelButtonText: {
-    color: '#fff',
-    fontSize: 16,
+  statItem: {
+    flex: 1,
+    alignItems: 'center',
+  },
+  statNumber: {
+    fontSize: 20,
     fontWeight: 'bold',
+    color: '#e74c3c',
+  },
+  statLabel: {
+    fontSize: 12,
+    color: '#7f8c8d',
+    marginTop: 4,
+  },
+  listContainer: {
+    padding: 16,
   },
   expenseCard: {
-    backgroundColor: '#f8f9fa',
-    borderRadius: 8,
+    backgroundColor: '#fff',
+    borderRadius: 12,
     padding: 16,
     marginBottom: 12,
-    borderLeftWidth: 4,
-    borderLeftColor: '#e74c3c',
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOpacity: 0.08,
+    shadowRadius: 4,
+    shadowOffset: { width: 0, height: 2 },
   },
   expenseHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
+    alignItems: 'center',
     marginBottom: 12,
     paddingBottom: 8,
     borderBottomWidth: 1,
-    borderBottomColor: '#ddd',
+    borderBottomColor: '#e9ecef',
   },
-  expenseId: {
+  expenseDate: {
     fontSize: 16,
+    fontWeight: 'bold',
+    color: '#2c3e50',
+  },
+  expenseTotal: {
+    fontSize: 18,
     fontWeight: 'bold',
     color: '#e74c3c',
   },
-  expenseDate: {
-    fontSize: 14,
-    color: '#7f8c8d',
-    fontWeight: 'bold',
-  },
   expenseDetails: {
-    gap: 6,
+    marginBottom: 12,
   },
   expenseRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
+    marginBottom: 6,
   },
   expenseLabel: {
     fontSize: 14,
     color: '#7f8c8d',
     fontWeight: '500',
-    flex: 1,
   },
   expenseValue: {
     fontSize: 14,
     color: '#2c3e50',
-    fontWeight: 'bold',
+    fontWeight: '500',
+  },
+  expenseBreakdown: {
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: '#e9ecef',
+  },
+  breakdownText: {
+    fontSize: 12,
+    color: '#7f8c8d',
+    fontStyle: 'italic',
+  },
+  modalOverlay: {
     flex: 1,
-    textAlign: 'right',
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
-  totalAmount: {
-    color: '#e74c3c',
-    fontSize: 16,
+  modalContent: {
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    width: '90%',
+    maxHeight: '80%',
   },
-  loadingText: {
-    fontSize: 16,
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e9ecef',
+  },
+  modalTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#2c3e50',
+  },
+  closeButton: {
+    fontSize: 24,
     color: '#7f8c8d',
-    textAlign: 'center',
+  },
+  modalBody: {
+    padding: 20,
+    maxHeight: 400,
+  },
+  input: {
+    borderWidth: 1,
+    borderColor: '#ddd',
+    borderRadius: 8,
+    padding: 12,
+    marginBottom: 12,
+    fontSize: 16,
+  },
+  calculationPreview: {
+    backgroundColor: '#f8f9fa',
+    padding: 12,
+    borderRadius: 8,
+    marginTop: 8,
+  },
+  calculationText: {
+    fontSize: 14,
+    color: '#2c3e50',
     fontStyle: 'italic',
   },
-  noExpensesText: {
+  modalButtons: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    padding: 20,
+    borderTopWidth: 1,
+    borderTopColor: '#e9ecef',
+  },
+  modalButton: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 8,
+    marginHorizontal: 8,
+  },
+  cancelButton: {
+    backgroundColor: '#95a5a6',
+  },
+  saveButton: {
+    backgroundColor: '#27ae60',
+  },
+  cancelButtonText: {
+    color: '#fff',
     fontSize: 16,
-    color: '#7f8c8d',
+    fontWeight: 'bold',
     textAlign: 'center',
-    fontStyle: 'italic',
+  },
+  saveButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: 'bold',
+    textAlign: 'center',
   },
 }); 

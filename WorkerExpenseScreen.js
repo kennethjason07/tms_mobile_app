@@ -2,257 +2,308 @@ import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
-  TextInput,
-  TouchableOpacity,
   StyleSheet,
-  ScrollView,
-  Alert,
-  Image,
   FlatList,
+  TouchableOpacity,
+  Alert,
+  ActivityIndicator,
+  TextInput,
   Modal,
+  ScrollView,
 } from 'react-native';
+import { SupabaseAPI } from './supabase';
 
 export default function WorkerExpenseScreen({ navigation }) {
-  const [workers, setWorkers] = useState([]);
   const [expenses, setExpenses] = useState([]);
+  const [workers, setWorkers] = useState([]);
+  const [filteredExpenses, setFilteredExpenses] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [selectedWorker, setSelectedWorker] = useState('');
-  const [formData, setFormData] = useState({
-    date: new Date().toISOString().split('T')[0],
-    amountPaid: '',
+  const [searchQuery, setSearchQuery] = useState('');
+  const [modalVisible, setModalVisible] = useState(false);
+  const [newExpense, setNewExpense] = useState({
+    worker_id: '',
+    date: '',
+    name: '',
+    Amt_Paid: '',
   });
 
   useEffect(() => {
-    fetchWorkers();
-    fetchWorkerExpenses();
+    loadData();
   }, []);
 
-  const fetchWorkers = async () => {
-    try {
-      const response = await fetch('http://127.0.0.1:5000/api/workers');
-      const data = await response.json();
-      setWorkers(data);
-    } catch (error) {
-      console.error('Error fetching workers:', error);
-      Alert.alert('Error', 'Failed to fetch workers');
-    }
-  };
+  useEffect(() => {
+    filterExpenses();
+  }, [searchQuery, expenses]);
 
-  const fetchWorkerExpenses = async () => {
-    setLoading(true);
+  const loadData = async () => {
     try {
-      const response = await fetch('http://127.0.0.1:5000/api/worker-expenses');
-      const data = await response.json();
+      setLoading(true);
+      const [expensesData, workersData] = await Promise.all([
+        SupabaseAPI.getWorkerExpenses(),
+        SupabaseAPI.getWorkers()
+      ]);
       
-      if (data && data.length > 0) {
-        // Sort the expenses array in descending order by date
-        const sortedData = data.sort((a, b) => new Date(b.date) - new Date(a.date));
-        setExpenses(sortedData);
-      } else {
-        setExpenses([]);
-      }
+      setExpenses(expensesData);
+      setWorkers(workersData);
+      setFilteredExpenses(expensesData);
     } catch (error) {
-      console.error('Error fetching worker expenses:', error);
-      Alert.alert('Error', 'Failed to fetch worker expenses');
+      Alert.alert('Error', `Failed to load data: ${error.message}`);
     } finally {
       setLoading(false);
     }
   };
 
-  const handleInputChange = (field, value) => {
-    setFormData(prev => ({
-      ...prev,
-      [field]: value,
-    }));
+  const filterExpenses = () => {
+    if (!searchQuery.trim()) {
+      setFilteredExpenses(expenses);
+      return;
+    }
+
+    const filtered = expenses.filter(expense => {
+      const worker = workers.find(w => w.id === expense.worker_id);
+      return (
+        expense.name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        worker?.name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        expense.date?.includes(searchQuery)
+      );
+    });
+    setFilteredExpenses(filtered);
   };
 
-  const submitExpense = async () => {
-    if (!selectedWorker || !formData.date || !formData.amountPaid) {
-      Alert.alert('Error', 'Please fill all the fields before submitting.');
+  const handleAddExpense = async () => {
+    if (!newExpense.worker_id || !newExpense.date || !newExpense.name || !newExpense.Amt_Paid) {
+      Alert.alert('Error', 'All fields are required');
       return;
     }
-
-    const selectedWorkerData = workers.find(worker => worker.id.toString() === selectedWorker);
-    if (!selectedWorkerData) {
-      Alert.alert('Error', 'Please select a valid worker.');
-      return;
-    }
-
-    const expenseData = {
-      worker_id: selectedWorker,
-      name: selectedWorkerData.name,
-      date: formData.date,
-      Amt_Paid: parseFloat(formData.amountPaid),
-    };
 
     try {
-      const response = await fetch('http://127.0.0.1:5000/api/worker-expense', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(expenseData),
+      setLoading(true);
+      const expenseData = {
+        worker_id: parseInt(newExpense.worker_id),
+        date: newExpense.date,
+        name: newExpense.name,
+        Amt_Paid: parseFloat(newExpense.Amt_Paid),
+      };
+
+      await SupabaseAPI.addWorkerExpense(expenseData);
+      setModalVisible(false);
+      setNewExpense({
+        worker_id: '',
+        date: '',
+        name: '',
+        Amt_Paid: '',
       });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(errorText);
-      }
-
-      const result = await response.json();
+      loadData(); // Reload the list
       Alert.alert('Success', 'Worker expense added successfully');
-      console.log('Worker expense added:', result);
-      
-      // Reset form
-      setSelectedWorker('');
-      setFormData({
-        date: new Date().toISOString().split('T')[0],
-        amountPaid: '',
-      });
-      
-      // Refresh expenses list
-      fetchWorkerExpenses();
     } catch (error) {
-      console.error('Error adding worker expense:', error);
-      Alert.alert('Error', 'Failed to add worker expense');
+      Alert.alert('Error', `Failed to add expense: ${error.message}`);
+    } finally {
+      setLoading(false);
     }
   };
 
-  const renderExpenseItem = ({ item: expense }) => (
-    <View style={styles.expenseCard}>
-      <View style={styles.expenseHeader}>
-        <Text style={styles.expenseId}>ID: {expense.id}</Text>
-        <Text style={styles.expenseDate}>
-          {new Date(expense.date).toLocaleDateString()}
-        </Text>
+  const calculateTotalExpenses = () => {
+    return filteredExpenses.reduce((total, expense) => {
+      return total + (expense.Amt_Paid || 0);
+    }, 0);
+  };
+
+  const getWorkerName = (workerId) => {
+    const worker = workers.find(w => w.id === workerId);
+    return worker ? worker.name : 'Unknown Worker';
+  };
+
+  const getTodayDate = () => {
+    const today = new Date();
+    return today.toISOString().split('T')[0];
+  };
+
+  const renderExpense = ({ item }) => {
+    const workerName = getWorkerName(item.worker_id);
+    
+    return (
+      <View style={styles.expenseCard}>
+        <View style={styles.expenseHeader}>
+          <Text style={styles.expenseDate}>
+            {new Date(item.date).toLocaleDateString()}
+          </Text>
+          <Text style={styles.expenseAmount}>₹{item.Amt_Paid}</Text>
+        </View>
+
+        <View style={styles.expenseDetails}>
+          <View style={styles.expenseRow}>
+            <Text style={styles.expenseLabel}>Worker:</Text>
+            <Text style={styles.expenseValue}>{workerName}</Text>
+          </View>
+
+          <View style={styles.expenseRow}>
+            <Text style={styles.expenseLabel}>Description:</Text>
+            <Text style={styles.expenseValue}>{item.name}</Text>
+          </View>
+
+          <View style={styles.expenseRow}>
+            <Text style={styles.expenseLabel}>Worker ID:</Text>
+            <Text style={styles.expenseValue}>#{item.worker_id}</Text>
+          </View>
+        </View>
       </View>
+    );
+  };
 
-      <View style={styles.expenseDetails}>
-        <View style={styles.expenseRow}>
-          <Text style={styles.expenseLabel}>Worker Name:</Text>
-          <Text style={styles.expenseValue}>{expense.name}</Text>
-        </View>
-
-        <View style={styles.expenseRow}>
-          <Text style={styles.expenseLabel}>Worker ID:</Text>
-          <Text style={styles.expenseValue}>{expense.worker_id}</Text>
-        </View>
-
-        <View style={styles.expenseRow}>
-          <Text style={styles.expenseLabel}>Amount Paid:</Text>
-          <Text style={[styles.expenseValue, styles.amountText]}>₹{expense.Amt_Paid}</Text>
-        </View>
+  if (loading && expenses.length === 0) {
+    return (
+      <View style={styles.loadingContainer}>
+        <ActivityIndicator size="large" color="#2980b9" />
+        <Text style={styles.loadingText}>Loading worker expenses...</Text>
       </View>
-    </View>
-  );
+    );
+  }
 
   return (
     <View style={styles.container}>
-      {/* Header */}
       <View style={styles.header}>
-        <TouchableOpacity
-          style={styles.backButton}
-          onPress={() => navigation.goBack()}
-        >
-          <Text style={styles.backButtonText}>←</Text>
+        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
+          <Text style={styles.backButtonText}>← Back</Text>
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Worker Expenses</Text>
-        <View style={styles.placeholder} />
+        <TouchableOpacity
+          style={styles.addButton}
+          onPress={() => setModalVisible(true)}
+          disabled={loading}
+        >
+          <Text style={styles.addButtonText}>+ Add</Text>
+        </TouchableOpacity>
       </View>
 
-      <ScrollView style={styles.content}>
-        <Text style={styles.screenTitle}>Worker Expenses</Text>
+      <View style={styles.searchContainer}>
+        <TextInput
+          style={styles.searchInput}
+          placeholder="Search by worker name, description, or date..."
+          value={searchQuery}
+          onChangeText={setSearchQuery}
+        />
+      </View>
 
-        {/* Add Expense Form */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Add New Expense</Text>
-          
-          <View style={styles.formContainer}>
-            {/* Worker Selection */}
-            <View style={styles.inputRow}>
+      <View style={styles.statsContainer}>
+        <View style={styles.statItem}>
+          <Text style={styles.statNumber}>{filteredExpenses.length}</Text>
+          <Text style={styles.statLabel}>Total Entries</Text>
+        </View>
+        <View style={styles.statItem}>
+          <Text style={styles.statNumber}>₹{calculateTotalExpenses().toFixed(2)}</Text>
+          <Text style={styles.statLabel}>Total Paid</Text>
+        </View>
+        <View style={styles.statItem}>
+          <Text style={styles.statNumber}>
+            ₹{(calculateTotalExpenses() / Math.max(filteredExpenses.length, 1)).toFixed(2)}
+          </Text>
+          <Text style={styles.statLabel}>Avg per Entry</Text>
+        </View>
+      </View>
+
+      <FlatList
+        data={filteredExpenses}
+        renderItem={renderExpense}
+        keyExtractor={(item) => item.id.toString()}
+        contentContainerStyle={styles.listContainer}
+        refreshing={loading}
+        onRefresh={loadData}
+        showsVerticalScrollIndicator={false}
+      />
+
+      {/* Add Expense Modal */}
+      <Modal
+        animationType="slide"
+        transparent={true}
+        visible={modalVisible}
+        onRequestClose={() => setModalVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Add Worker Expense</Text>
+              <TouchableOpacity onPress={() => setModalVisible(false)}>
+                <Text style={styles.closeButton}>✕</Text>
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView style={styles.modalBody}>
               <Text style={styles.inputLabel}>Select Worker:</Text>
-              <View style={styles.pickerContainer}>
-                <TouchableOpacity
-                  style={styles.pickerButton}
-                  onPress={() => {
-                    // Show worker selection modal
-                    const workerNames = workers.map(worker => `${worker.id} - ${worker.name}`);
-                    Alert.alert(
-                      'Select Worker',
-                      'Choose a worker:',
-                      workers.map((worker, index) => ({
-                        text: `${worker.id} - ${worker.name}`,
-                        onPress: () => setSelectedWorker(worker.id.toString()),
-                      })).concat([
-                        {
-                          text: 'Cancel',
-                          style: 'cancel',
-                        },
-                      ])
-                    );
-                  }}
-                >
-                  <Text style={styles.pickerButtonText}>
-                    {selectedWorker 
-                      ? workers.find(w => w.id.toString() === selectedWorker)?.name || 'Select Worker'
-                      : 'Select Worker'
-                    }
-                  </Text>
-                </TouchableOpacity>
-              </View>
-            </View>
+              <ScrollView style={styles.workerSelector} horizontal showsHorizontalScrollIndicator={false}>
+                {workers.map((worker) => (
+                  <TouchableOpacity
+                    key={worker.id}
+                    style={[
+                      styles.workerOption,
+                      newExpense.worker_id === worker.id.toString() && styles.workerOptionSelected
+                    ]}
+                    onPress={() => setNewExpense({ ...newExpense, worker_id: worker.id.toString() })}
+                  >
+                    <Text style={[
+                      styles.workerOptionText,
+                      newExpense.worker_id === worker.id.toString() && styles.workerOptionTextSelected
+                    ]}>
+                      {worker.name}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
 
-            {/* Date Input */}
-            <View style={styles.inputRow}>
-              <Text style={styles.inputLabel}>Date:</Text>
               <TextInput
-                style={styles.dateInput}
-                value={formData.date}
-                onChangeText={(value) => handleInputChange('date', value)}
-                placeholder="YYYY-MM-DD"
+                style={styles.input}
+                placeholder="Date (YYYY-MM-DD)"
+                value={newExpense.date}
+                onChangeText={(text) => setNewExpense({ ...newExpense, date: text })}
+                defaultValue={getTodayDate()}
               />
-            </View>
 
-            {/* Amount Input */}
-            <View style={styles.inputRow}>
-              <Text style={styles.inputLabel}>Amount Paid:</Text>
               <TextInput
-                style={styles.numberInput}
-                value={formData.amountPaid}
-                onChangeText={(value) => handleInputChange('amountPaid', value)}
-                placeholder="0"
+                style={styles.input}
+                placeholder="Description (e.g., Advance, Bonus, etc.)"
+                value={newExpense.name}
+                onChangeText={(text) => setNewExpense({ ...newExpense, name: text })}
+              />
+
+              <TextInput
+                style={styles.input}
+                placeholder="Amount Paid"
+                value={newExpense.Amt_Paid}
+                onChangeText={(text) => setNewExpense({ ...newExpense, Amt_Paid: text })}
                 keyboardType="numeric"
               />
-            </View>
 
-            {/* Submit Button */}
-            <TouchableOpacity
-              style={styles.submitButton}
-              onPress={submitExpense}
-            >
-              <Text style={styles.submitButtonText}>Submit</Text>
-            </TouchableOpacity>
+              {newExpense.worker_id && (
+                <View style={styles.workerInfo}>
+                  <Text style={styles.workerInfoTitle}>Selected Worker:</Text>
+                  <Text style={styles.workerInfoText}>
+                    {getWorkerName(parseInt(newExpense.worker_id))}
+                  </Text>
+                </View>
+              )}
+            </ScrollView>
+
+            <View style={styles.modalButtons}>
+              <TouchableOpacity
+                style={[styles.modalButton, styles.cancelButton]}
+                onPress={() => setModalVisible(false)}
+              >
+                <Text style={styles.cancelButtonText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.modalButton, styles.saveButton]}
+                onPress={handleAddExpense}
+                disabled={loading}
+              >
+                {loading ? (
+                  <ActivityIndicator size="small" color="#fff" />
+                ) : (
+                  <Text style={styles.saveButtonText}>Save</Text>
+                )}
+              </TouchableOpacity>
+            </View>
           </View>
         </View>
-
-        {/* Expenses List */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Expenses History ({expenses.length})</Text>
-          {loading ? (
-            <Text style={styles.loadingText}>Loading expenses...</Text>
-          ) : expenses.length > 0 ? (
-            <FlatList
-              data={expenses}
-              renderItem={renderExpenseItem}
-              keyExtractor={(item) => item.id.toString()}
-              scrollEnabled={false}
-              showsVerticalScrollIndicator={false}
-            />
-          ) : (
-            <Text style={styles.noExpensesText}>No expenses found.</Text>
-          )}
-        </View>
-      </ScrollView>
+      </Modal>
     </View>
   );
 }
@@ -262,9 +313,21 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#f8f9fa',
   },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#f8f9fa',
+  },
+  loadingText: {
+    marginTop: 10,
+    fontSize: 16,
+    color: '#7f8c8d',
+  },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'space-between',
     padding: 16,
     backgroundColor: '#fff',
     elevation: 4,
@@ -275,169 +338,228 @@ const styles = StyleSheet.create({
   },
   backButton: {
     padding: 8,
-    marginRight: 12,
   },
   backButtonText: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: '#34495e',
+    fontSize: 16,
+    color: '#2980b9',
   },
   headerTitle: {
-    fontSize: 18,
+    fontSize: 20,
     fontWeight: 'bold',
-    color: '#34495e',
-  },
-  placeholder: {
-    flex: 1,
-  },
-  content: {
-    flex: 1,
-    padding: 16,
-  },
-  screenTitle: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    marginBottom: 20,
     color: '#2c3e50',
   },
-  section: {
-    backgroundColor: '#fff',
+  addButton: {
+    backgroundColor: '#27ae60',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
     borderRadius: 8,
+  },
+  addButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  searchContainer: {
     padding: 16,
-    marginBottom: 16,
+    backgroundColor: '#fff',
+    borderBottomWidth: 1,
+    borderBottomColor: '#e9ecef',
+  },
+  searchInput: {
+    borderWidth: 1,
+    borderColor: '#ddd',
+    borderRadius: 8,
+    padding: 12,
+    fontSize: 16,
+  },
+  statsContainer: {
+    flexDirection: 'row',
+    padding: 16,
+    backgroundColor: '#fff',
+    marginBottom: 8,
+  },
+  statItem: {
+    flex: 1,
+    alignItems: 'center',
+  },
+  statNumber: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#e74c3c',
+  },
+  statLabel: {
+    fontSize: 12,
+    color: '#7f8c8d',
+    marginTop: 4,
+  },
+  listContainer: {
+    padding: 16,
+  },
+  expenseCard: {
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 12,
     elevation: 2,
     shadowColor: '#000',
     shadowOpacity: 0.08,
     shadowRadius: 4,
     shadowOffset: { width: 0, height: 2 },
   },
-  sectionTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    marginBottom: 12,
-    color: '#2980b9',
-  },
-  formContainer: {
-    gap: 16,
-  },
-  inputRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  inputLabel: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    color: '#34495e',
-    flex: 1,
-  },
-  dateInput: {
-    flex: 1,
-    borderWidth: 1,
-    borderColor: '#ddd',
-    borderRadius: 4,
-    padding: 12,
-    marginLeft: 12,
-    fontSize: 16,
-  },
-  numberInput: {
-    flex: 1,
-    borderWidth: 1,
-    borderColor: '#ddd',
-    borderRadius: 4,
-    padding: 12,
-    marginLeft: 12,
-    fontSize: 16,
-    textAlign: 'right',
-  },
-  pickerContainer: {
-    flex: 1,
-    marginLeft: 12,
-  },
-  pickerButton: {
-    borderWidth: 1,
-    borderColor: '#ddd',
-    borderRadius: 4,
-    padding: 12,
-    backgroundColor: '#f8f9fa',
-  },
-  pickerButtonText: {
-    fontSize: 16,
-    color: '#34495e',
-  },
-  submitButton: {
-    backgroundColor: '#2980b9',
-    padding: 16,
-    borderRadius: 8,
-    alignItems: 'center',
-    marginTop: 8,
-  },
-  submitButtonText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: 'bold',
-  },
-  expenseCard: {
-    backgroundColor: '#f8f9fa',
-    borderRadius: 8,
-    padding: 16,
-    marginBottom: 12,
-    borderLeftWidth: 4,
-    borderLeftColor: '#f39c12',
-  },
   expenseHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
+    alignItems: 'center',
     marginBottom: 12,
     paddingBottom: 8,
     borderBottomWidth: 1,
-    borderBottomColor: '#ddd',
-  },
-  expenseId: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    color: '#f39c12',
+    borderBottomColor: '#e9ecef',
   },
   expenseDate: {
-    fontSize: 14,
-    color: '#7f8c8d',
+    fontSize: 16,
     fontWeight: 'bold',
+    color: '#2c3e50',
+  },
+  expenseAmount: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#e74c3c',
   },
   expenseDetails: {
-    gap: 6,
+    marginBottom: 8,
   },
   expenseRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
+    marginBottom: 6,
   },
   expenseLabel: {
     fontSize: 14,
     color: '#7f8c8d',
     fontWeight: '500',
-    flex: 1,
   },
   expenseValue: {
     fontSize: 14,
     color: '#2c3e50',
-    fontWeight: 'bold',
+    fontWeight: '500',
+  },
+  modalOverlay: {
     flex: 1,
-    textAlign: 'right',
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
-  amountText: {
-    color: '#f39c12',
-    fontSize: 16,
+  modalContent: {
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    width: '90%',
+    maxHeight: '80%',
   },
-  loadingText: {
-    fontSize: 16,
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e9ecef',
+  },
+  modalTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#2c3e50',
+  },
+  closeButton: {
+    fontSize: 24,
     color: '#7f8c8d',
-    textAlign: 'center',
-    fontStyle: 'italic',
   },
-  noExpensesText: {
+  modalBody: {
+    padding: 20,
+    maxHeight: 400,
+  },
+  inputLabel: {
     fontSize: 16,
-    color: '#7f8c8d',
+    fontWeight: 'bold',
+    color: '#2c3e50',
+    marginBottom: 8,
+  },
+  workerSelector: {
+    marginBottom: 16,
+  },
+  workerOption: {
+    backgroundColor: '#f8f9fa',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 20,
+    marginRight: 8,
+    borderWidth: 1,
+    borderColor: '#ddd',
+  },
+  workerOptionSelected: {
+    backgroundColor: '#2980b9',
+    borderColor: '#2980b9',
+  },
+  workerOptionText: {
+    fontSize: 14,
+    color: '#2c3e50',
+  },
+  workerOptionTextSelected: {
+    color: '#fff',
+    fontWeight: 'bold',
+  },
+  input: {
+    borderWidth: 1,
+    borderColor: '#ddd',
+    borderRadius: 8,
+    padding: 12,
+    marginBottom: 12,
+    fontSize: 16,
+  },
+  workerInfo: {
+    backgroundColor: '#f8f9fa',
+    padding: 12,
+    borderRadius: 8,
+    marginTop: 8,
+  },
+  workerInfoTitle: {
+    fontSize: 14,
+    fontWeight: 'bold',
+    color: '#2c3e50',
+    marginBottom: 4,
+  },
+  workerInfoText: {
+    fontSize: 14,
+    color: '#2980b9',
+  },
+  modalButtons: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    padding: 20,
+    borderTopWidth: 1,
+    borderTopColor: '#e9ecef',
+  },
+  modalButton: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 8,
+    marginHorizontal: 8,
+  },
+  cancelButton: {
+    backgroundColor: '#95a5a6',
+  },
+  saveButton: {
+    backgroundColor: '#27ae60',
+  },
+  cancelButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: 'bold',
     textAlign: 'center',
-    fontStyle: 'italic',
+  },
+  saveButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: 'bold',
+    textAlign: 'center',
   },
 }); 
